@@ -26,9 +26,12 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include "printf.h"
+#ifndef PRINTF
+#define PRINTF
+#endif
 #include "USB_PD_core.h"
 #include "ina236.h"
-#include "printf.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -152,6 +155,7 @@ int main(void)
   
   usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
   
+  Print_PDO_FROM_SRC(usb_port_id);
   push_button_Action_Flag[usb_port_id] = 0;
   Read_RDO(usb_port_id);
 
@@ -190,6 +194,9 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    float power_p12V = ina236_get_power(&ina_pos_12V);
+    float power_n12V = ina236_get_power(&ina_neg_12V);
+    float power_5V = ina236_get_power(&ina_5V);
   }
   /* USER CODE END 3 */
 }

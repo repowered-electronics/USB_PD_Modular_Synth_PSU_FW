@@ -37,14 +37,16 @@ extern I2C_HandleTypeDef hi2c1;
 extern I2C_HandleTypeDef hi2c2;
 
 /* USER CODE BEGIN Private defines */
-
+#define LOCK_I2C_RESOURCE()          HAL_NVIC_DisableIRQ(ALERT_A_EXTI_IRQn);
+#define UNLOCK_I2C_RESOURCE()         HAL_NVIC_EnableIRQ(ALERT_A_EXTI_IRQn);
 /* USER CODE END Private defines */
 
 void MX_I2C1_Init(void);
 void MX_I2C2_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-
+HAL_StatusTypeDef I2C_Read_USB_PD(uint8_t Port,uint16_t I2cDeviceID_7bit ,uint16_t Address ,void *DataR ,uint16_t Length);
+HAL_StatusTypeDef I2C_Write_USB_PD(uint8_t Port,uint16_t I2cDeviceID_7bit ,uint16_t Address ,uint8_t *DataW ,uint16_t Length);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

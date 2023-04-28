@@ -21,7 +21,12 @@
 #include "i2c.h"
 
 /* USER CODE BEGIN 0 */
-
+extern I2C_HandleTypeDef *hi2c[2];    
+extern unsigned int I2cDeviceID_7bit;
+extern unsigned int Address;
+extern unsigned int AddressSize ;
+extern uint8_t USB_PD_Interupt_Flag[] ;
+extern uint8_t USB_PD_Interupt_PostponedFlag[] ;
 /* USER CODE END 0 */
 
 I2C_HandleTypeDef hi2c1;
@@ -184,5 +189,30 @@ void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)
 }
 
 /* USER CODE BEGIN 1 */
+extern void ALARM_MANAGEMENT(uint8_t Usb_Port);
 
+
+HAL_StatusTypeDef I2C_Read_USB_PD(uint8_t Port,uint16_t I2cDeviceID_7bit ,uint16_t Address ,void *DataR ,uint16_t Length)
+{     HAL_StatusTypeDef stat;
+stat = HAL_I2C_Mem_Read(hi2c[Port],(I2cDeviceID_7bit<<1), Address ,AddressSize, DataR, Length,20);
+if (USB_PD_Interupt_PostponedFlag[Port] == 1) 
+{
+  USB_PD_Interupt_PostponedFlag[Port] = 0;
+  ALARM_MANAGEMENT(Port) ;
+}
+return stat ; 
+}
+
+HAL_StatusTypeDef I2C_Write_USB_PD(uint8_t Port,uint16_t I2cDeviceID_7bit ,uint16_t Address ,uint8_t *DataW ,uint16_t Length)
+{
+  HAL_StatusTypeDef stat;
+  stat = HAL_I2C_Mem_Write(hi2c[Port],(I2cDeviceID_7bit<<1), Address ,AddressSize, DataW, Length,20);
+  if (USB_PD_Interupt_PostponedFlag[Port] == 1) 
+  {
+    USB_PD_Interupt_PostponedFlag[Port] = 0;
+    ALARM_MANAGEMENT(Port) ;
+ }
+  return stat ; 
+  
+}
 /* USER CODE END 1 */

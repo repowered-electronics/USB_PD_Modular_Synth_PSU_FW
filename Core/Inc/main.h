@@ -77,6 +77,10 @@ void Error_Handler(void);
 #define PGOOD_5V_GPIO_Port GPIOA
 #define USBPD_RST_Pin GPIO_PIN_3
 #define USBPD_RST_GPIO_Port GPIOB
+#define ALERT_A_GPIO_Port USBPD_ALERT_GPIO_Port
+#define ALERT_A_Pin USBPD_ALERT_Pin
+#define ALERT_A_EXTI_IRQn 0
+
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

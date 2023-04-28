@@ -153,11 +153,11 @@ int main(void)
   memset((uint32_t *)PDO_FROM_SRC[usb_port_id], 0, 7);
   memset((uint32_t *)PDO_SNK[usb_port_id], 0, 3);
   
-  usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
+  // usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
   
-  Print_PDO_FROM_SRC(usb_port_id);
+  // Print_PDO_FROM_SRC(usb_port_id);
   push_button_Action_Flag[usb_port_id] = 0;
-  Read_RDO(usb_port_id);
+  // Read_RDO(usb_port_id);
 
   connection_flag[usb_port_id] = 1;
   Previous_VBUS_Current_limitation[usb_port_id] = VBUS_Current_limitation[usb_port_id];
@@ -184,6 +184,9 @@ int main(void)
   ina_neg_12V.int_pin = ALERT_NEG_12V_Pin;
   ina236_init(&ina_neg_12V); 
   /**** END SETUP INA236's ****/
+    
+    ENABLE_PRIMARY_12V(); // starting primary 
+    
 
   /* USER CODE END 2 */
 

@@ -50,8 +50,8 @@ extern "C" {
   
 #endif
 
-
-#include "USB_PD_defines_STUSB-GEN1S.h"
+#include "stm32f1xx_hal.h"
+#include "USB_PD_defines.h"
   
 #define USBPORT_MAX 2
 #define I2CBUS_MAX 1

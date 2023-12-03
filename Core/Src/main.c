@@ -47,6 +47,10 @@
 /* USER CODE BEGIN PM */
 #define ENABLE_PRIMARY_12V() HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 0)
 #define DISABLE_PRIMARY_12V() HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 1)
+#define ENABLE_PDGOOD_LED() HAL_GPIO_WritePin(PDGOOD_GPIO_Port, PDGOOD_Pin, 1)
+#define DISABLE_PDGOOD_LED() HAL_GPIO_WritePin(PDGOOD_GPIO_Port, PDGOOD_Pin, 0)
+#define ENABLE_OVRLD_LED() HAL_GPIO_WritePin(PDBAD_GPIO_Port, PDBAD_Pin, 1)
+#define DISABLE_OVRLD_LED() HAL_GPIO_WritePin(PDBAD_GPIO_Port, PDBAD_Pin, 0)
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -135,10 +139,12 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* ENSURE EXTERNAL SUPPLIES START IN OFF STATE */
-  DISABLE_PRIMARY_12V();
-
+  
+  ENABLE_PRIMARY_12V();
+  DISABLE_OVRLD_LED();
+  ENABLE_PDGOOD_LED();  
   /* SETUP USB PD STUFF */
-  HAL_Delay(30); // allow STUSB4500 to initialize
+  
   hi2c[0] = &hi2c1;
   STUSB45DeviceConf[usb_port_id].I2cBus = usb_port_id;
   STUSB45DeviceConf[usb_port_id].I2cDeviceID_7bit = 0x28;
@@ -153,20 +159,46 @@ int main(void)
   memset((uint32_t *)PDO_FROM_SRC[usb_port_id], 0, 7);
   memset((uint32_t *)PDO_SNK[usb_port_id], 0, 3);
   
-  // usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
+  usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
+
+  HAL_Delay(500); // allow STUSB4500 to initialize
+
+  Read_SNK_PDO(usb_port_id);
+
   
-  // Print_PDO_FROM_SRC(usb_port_id);
+
+  Print_PDO_FROM_SRC(usb_port_id);
+
+  Find_Max_SRC_PDO(usb_port_id);
+
+  HAL_Delay(500);
+
+  DISABLE_PRIMARY_12V();
+  for(int i=0; i<25; i++)
+  {
+    __NOP();
+  }
+  ENABLE_PRIMARY_12V();
+
+  Print_PDO_FROM_SRC(usb_port_id);
+
   push_button_Action_Flag[usb_port_id] = 0;
-  // Read_RDO(usb_port_id);
+  Read_RDO(usb_port_id);
+
+
+  Print_RDO(usb_port_id);
 
   connection_flag[usb_port_id] = 1;
   Previous_VBUS_Current_limitation[usb_port_id] = VBUS_Current_limitation[usb_port_id];
 
   /**** BEGIN SETUP INA236's ****/
+ 
+  ina_5V.hi2c = &hi2c1;
+
   ina236_general_call_reset(&ina_5V); // will reset all INA236's on the bus
   HAL_Delay(30);
 
-  ina_5V.hi2c = &hi2c1;
+
   ina_5V.addr = 0x41;
   ina_5V.shunt = 0.01;
   ina_5V.int_pin = ALERT_5V_Pin;
@@ -182,12 +214,27 @@ int main(void)
   ina_neg_12V.addr = 0x43;
   ina_neg_12V.shunt = 0.01;
   ina_neg_12V.int_pin = ALERT_NEG_12V_Pin;
-  ina236_init(&ina_neg_12V); 
-  /**** END SETUP INA236's ****/
-    
-    ENABLE_PRIMARY_12V(); // starting primary 
-    
+  ina236_init(&ina_neg_12V);
 
+
+  ina236_set_shunt_range(&ina_pos_12V, 0);
+  ina236_set_shunt_range(&ina_5V, 0);
+  ina236_set_shunt_range(&ina_neg_12V, 0);
+
+  ina236_set_shuntcal(&ina_pos_12V);
+  ina236_set_shuntcal(&ina_5V);
+  ina236_set_shuntcal(&ina_neg_12V);
+
+
+
+  /**** END SETUP INA236's ****/
+
+  ENABLE_PRIMARY_12V(); // starting primary 
+  HAL_Delay(50);
+  DISABLE_PRIMARY_12V();
+  HAL_Delay(1);
+  ENABLE_PRIMARY_12V();
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -197,9 +244,44 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+    // Reading Bus Voltage 
+    float volts_p12v = ina236_get_voltage(&ina_pos_12V);
+    float volts_5v = ina236_get_voltage(&ina_5V);
+    float volts_n12v = ina236_get_voltage(&ina_neg_12V);
+
+    
+
+    // Reading Current
+    float amps_p12v = ina236_get_current(&ina_pos_12V);
+    float amps_5v = ina236_get_current(&ina_5V);
+    float amps_n12v = ina236_get_current(&ina_neg_12V);
+
+    
+
+    // Reading Power
     float power_p12V = ina236_get_power(&ina_pos_12V);
     float power_n12V = ina236_get_power(&ina_neg_12V);
     float power_5V = ina236_get_power(&ina_5V);
+
+    // printf("+12V Rail Voltage is %f V\r\n", volts_p12v);
+    // printf("+12V Rail Current Draw is %f A\r\n", amps_p12v);
+    // printf("+12V Rail Power Draw is %f W\r\n\r\n", power_p12V);
+
+    // printf("5V Rail Voltage is %f V\r\n", volts_5v);
+    // printf("5V Rail Current Draw is %f A\r\n", amps_5v);
+    // printf("5V Rail Power Draw is %f W\r\n\r\n", power_5V);
+
+    // printf("-12V Rail Voltage is -%f V\r\n", volts_n12v);
+    // printf("-12V Rail Current Draw is %f A\r\n", amps_n12v);
+    // printf("-12V Rail Power Draw is %f W\r\n\r\n", power_n12V);
+    
+    // Print_SNK_PDO(usb_port_id);
+    HAL_Delay(10);
+
+    
+    
+    
   }
   /* USER CODE END 3 */
 }
@@ -293,12 +375,10 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
     ina = &ina_pos_12V;
   }else if(GPIO_Pin == ina_neg_12V.int_pin){
     ina = &ina_neg_12V;
-  }else{
-    return;
+  }else if (GPIO_Pin == ALERT_A_Pin) {
+    ALARM_MANAGEMENT(0);
   }
-
 }
-
 
 void _putchar(char character){
   HAL_UART_Transmit(&huart1, &character, 1, 1);

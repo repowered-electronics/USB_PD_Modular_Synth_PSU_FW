@@ -52,13 +52,22 @@ extern "C" {
 
 #include "stm32f1xx_hal.h"
 #include "USB_PD_defines.h"
-  
+
+#include "printf.h"
+
+#define ALERT_A_Pin         USBPD_ALERT_Pin
+#define ALERT_A_GPIO_Port   USBPD_ALERT_GPIO_Port
+
+#define ALERT_A_EXTI_IRQn   EXTI15_10_IRQn
+
 #define USBPORT_MAX 2
 #define I2CBUS_MAX 1
   
 #define true 1
 #define false 0    
-  
+
+#define PRINTF
+
 #define LE16(addr) (((uint16_t)(*((uint8_t *)(addr))))\
   + (((uint16_t)(*(((uint8_t *)(addr)) + 1))) << 8))
 
@@ -234,8 +243,7 @@ void Negotiate_5V(uint8_t Usb_Port);
 void Print_PDO_FROM_SRC(uint8_t Usb_Port);
 int Get_Device_STATUS(uint8_t Usb_Port);
 void Print_Type_C_Only_Status(uint8_t Usb_Port);
-
-
+int Find_Max_SRC_PDO(uint8_t Usb_Port);
 
 #ifdef __cplusplus
 }

@@ -74,6 +74,7 @@ typedef struct ina236_struct {
     uint8_t adc_range;
     float shunt; // shunt resistance in Ohms
     float current_LSB;
+    uint16_t shunt_cal; //shunt cal value
     uint16_t config;
     uint16_t int_pin;
 } INA236_t;
@@ -83,6 +84,7 @@ uint16_t ina236_read_reg(INA236_t* ina, uint8_t reg);
 void ina236_general_call_reset(INA236_t* ina);
 void ina236_init(INA236_t* ina);
 void ina236_reset(INA236_t* ina);
+void ina236_set_shuntcal(INA236_t* ina);
 float ina236_get_current(INA236_t* ina);
 float ina236_get_voltage(INA236_t* ina);
 float ina236_get_power(INA236_t* ina);

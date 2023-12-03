@@ -558,6 +558,51 @@ int Find_Matching_SRC_PDO(uint8_t Usb_Port,int Min_Power,int Min_V , int Max_V)
   
 }
 
+
+/************* Find Max PDO ******************/
+int Find_Max_SRC_PDO(uint8_t Usb_Port)
+{
+  int i_PDOmax;
+  int Pmax = 0;
+  int PDO_V;
+  int PDO_I;
+  int PDO_P;
+  int Vmax = 0;
+
+   if(PDO_FROM_SRC_Num[Usb_Port] > 0 )
+   {
+    for (int i=0; i< PDO_FROM_SRC_Num[Usb_Port]; i++)
+    {
+      PDO_V = PDO_FROM_SRC[Usb_Port][i].fix.Voltage * 50;
+      PDO_I = PDO_FROM_SRC[Usb_Port][i].fix.Max_Operating_Current * 10;
+      PDO_P = (PDO_V*PDO_I)/1000;
+      if (PDO_FROM_SRC[Usb_Port][i].fix.FixedSupply == 0)
+      {
+        if (PDO_P > Pmax)
+        {
+          Pmax = PDO_P;
+          i_PDOmax = i; 
+          Vmax = PDO_V;
+        }
+        else if (PDO_P == Pmax)
+        {
+          if (PDO_V > Vmax)
+          {
+            Vmax = PDO_V;
+            i_PDOmax = i;
+          }
+        }
+      }
+    }
+    PDO_V = PDO_FROM_SRC[Usb_Port][i_PDOmax].fix.Voltage * 50;
+    PDO_I = PDO_FROM_SRC[Usb_Port][i_PDOmax].fix.Max_Operating_Current * 10;
+
+    Update_PDO(Usb_Port, 2, PDO_V, PDO_I);
+    Update_Valid_PDO_Number(Usb_Port, 2);
+   }
+   return Pmax;
+}
+
 /************ Request_SRC_PDO_NUMBER(uint8_t Usb_Port, uint8_t SRC_PDO_position)   ******************/
 /*
 * @brief This function copies the SRC_PDO corresponding to the position set in parameter into STUSB4500 PDO2

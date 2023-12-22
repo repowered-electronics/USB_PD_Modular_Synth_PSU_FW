@@ -31,11 +31,11 @@ STUSB_GEN1S_RDO_REG_STATUS_RegTypeDef Nego_RDO[USBPORT_MAX];
 uint8_t TypeC_Only_status[USBPORT_MAX] = {0} ;
 uint8_t PDO_SNK_NUMB[USBPORT_MAX];
 
-
 extern uint8_t  USB_PD_Interupt_Flag[USBPORT_MAX] ;
 extern uint8_t USB_PD_Status_change_flag[USBPORT_MAX] ;
 
 extern USB_PD_I2C_PORT STUSB45DeviceConf[USBPORT_MAX];
+
 
 
 /**
@@ -562,8 +562,8 @@ int Find_Matching_SRC_PDO(uint8_t Usb_Port,int Min_Power,int Min_V , int Max_V)
 /************* Find Max PDO ******************/
 int Find_Max_SRC_PDO(uint8_t Usb_Port)
 {
-  int i_PDOmax;
   int Pmax = 0;
+  int i_PDOmax;
   int PDO_V;
   int PDO_I;
   int PDO_P;
@@ -599,6 +599,26 @@ int Find_Max_SRC_PDO(uint8_t Usb_Port)
 
     Update_PDO(Usb_Port, 2, PDO_V, PDO_I);
     Update_Valid_PDO_Number(Usb_Port, 2);
+
+    if(Vmax == 5000)
+    {
+      HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 1);
+    }
+    else if(Vmax == 9000)
+    {
+      HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 1);
+    }
+    else if (Vmax == 15000)
+    {
+      HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 1);
+    }
+    else if (Vmax == 20000)
+    {
+      HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 1);
+    }
+        
+    printf("pmax is %i \r\n", Pmax);
+    printf("vmax is %i \r\n", Vmax);
    }
    return Pmax;
 }

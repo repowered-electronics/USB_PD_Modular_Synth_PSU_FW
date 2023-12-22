@@ -89,5 +89,5 @@ float ina236_get_current(INA236_t* ina);
 float ina236_get_voltage(INA236_t* ina);
 float ina236_get_power(INA236_t* ina);
 void ina236_set_current_limit(INA236_t* ina, float limit);
-
+void ina236_set_alertSOL(INA236_t* ina);
 #endif // _INA236_H_

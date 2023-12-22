@@ -71,3 +71,12 @@ float ina236_get_power(INA236_t* ina){
     uint16_t regval = ina236_read_reg(ina, INA236_REG_POWER);
     return 32.0 * ina->current_LSB * (float)regval;
 }
+
+void ina236_set_current_limit(INA236_t* ina, float limit){
+    uint16_t SOL_lim = (limit/1000) * (ina->shunt);
+    ina236_set_reg(ina, INA236_REG_ALERT_LIMIT, SOL_lim);
+}
+
+void ina236_set_alertSOL(INA236_t* ina) {
+    ina236_set_reg(ina, INA236_REG_MASK_ENABLE, 0x8000);
+}

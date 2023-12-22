@@ -71,6 +71,10 @@ void Error_Handler(void);
 #define PD15V_GPIO_Port GPIOA
 #define PD20V_Pin GPIO_PIN_7
 #define PD20V_GPIO_Port GPIOA
+#define DISABLE_N12_Pin GPIO_PIN_0
+#define DISABLE_N12_GPIO_Port GPIOB
+#define DISABLE_5P0_Pin GPIO_PIN_1
+#define DISABLE_5P0_GPIO_Port GPIOB
 #define USBPD_ALERT_Pin GPIO_PIN_12
 #define USBPD_ALERT_GPIO_Port GPIOB
 #define USBPD_ALERT_EXTI_IRQn EXTI15_10_IRQn

@@ -23,6 +23,7 @@ void ina236_general_call_reset(INA236_t* ina){
 
 void ina236_init(INA236_t* ina){
     ina->config = ina236_read_reg(ina, INA236_REG_CONFIG);
+    ina236_set_reg(ina, INA236_REG_CONFIG, 0x43FF);
 }
 
 
@@ -73,7 +74,7 @@ float ina236_get_power(INA236_t* ina){
 }
 
 void ina236_set_current_limit(INA236_t* ina, float limit){
-    uint16_t SOL_lim = (limit/1000) * (ina->shunt);
+    int SOL_lim = (limit) * (ina->shunt);
     ina236_set_reg(ina, INA236_REG_ALERT_LIMIT, SOL_lim);
 }
 

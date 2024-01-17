@@ -611,6 +611,12 @@ int Find_Max_SRC_PDO(uint8_t Usb_Port)
     else if (Vmax == 15000)
     {
       HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 1);
+      HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 1);
+      for (int i=0; i<25; i++)
+      {
+        __NOP();
+      }
+      HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 0);
     }
     else if (Vmax == 20000)
     {

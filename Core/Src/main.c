@@ -182,9 +182,9 @@ int main(void)
 
   Print_PDO_FROM_SRC(usb_port_id);
 
-  Plim = Find_Max_SRC_PDO(usb_port_id);
+  Plim = Find_Max_SRC_PDO(usb_port_id); // Returns negotiated power level in mW
 
-  printf("the power limit is %d \r\n", Plim);
+  printf("the power limit is %dmW \r\n", Plim);
 
   HAL_Delay(500);
 
@@ -305,11 +305,17 @@ int main(void)
     HAL_Delay(100);                                                             // This delay is probably unnecessary, but adding it during ILIM debug to slow down the dynamic current limit update
 
     // Reading power from INA236
-    float power_p12V = ina236_get_power(&ina_pos_12V);
-    float power_n12V = ina236_get_power(&ina_neg_12V);
-    float power_5V = ina236_get_power(&ina_5V);
+    float power_p12V = 1000.0*ina236_get_power(&ina_pos_12V);                   // Returns +12V bus power in mW
+    float power_n12V = 1000.0*ina236_get_power(&ina_neg_12V);                   // Returns -12V bus power in mW
+    float power_5V = 1000.0*ina236_get_power(&ina_5V);                          // Returns +5V bus power in mW
 
-    int tot_power = (int)(power_p12V + power_n12V + power_5V);                  // Calculating total power
+    int tot_power = (int)(power_p12V + power_n12V + power_5V);                  // Calculating total power in mW
+
+    printf("The power draw of the 5V bus is %.2fmW\r\n", power_5V);
+    printf("The power draw of the -12V bus is %.2fmW\r\n", power_n12V);
+    printf("The power draw of the +12V bus is %.2fmW\r\n\r\n", power_p12V);
+
+    printf("The negotiated power limit is %dmW\r\n\r\n", Plim);
 
 
     // Hiccup control Restart
@@ -340,11 +346,15 @@ int main(void)
       DISABLE_OVRLD_LED();
       ENABLE_PDGOOD_LED();
     }
+
     // Conditional Statement for Lighting overload LED based on total power draw
     if(tot_power >= (Plim - Plim_guardband))
     {
       DISABLE_PDGOOD_LED();
       ENABLE_OVRLD_LED();
+      DISABLE_PRIMARY_12V();
+      Hiccup_p12v_flag = 1;             // If total system power exceeds limit - guardband, hiccup entire system (primary)
+      printf("Total power is exceeded");
     }
     
     else if (tot_power < (Plim - Plim_guardband))

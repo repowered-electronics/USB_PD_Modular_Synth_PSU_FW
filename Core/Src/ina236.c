@@ -74,7 +74,7 @@ float ina236_get_power(INA236_t* ina){
 }
 
 void ina236_set_current_limit(INA236_t* ina, float limit){
-    int SOL_lim = (limit) * (ina->shunt);
+    int16_t SOL_lim = (limit) / ina->current_LSB;
     ina236_set_reg(ina, INA236_REG_ALERT_LIMIT, SOL_lim);
 }
 

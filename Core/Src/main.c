@@ -78,9 +78,9 @@ int Plim_guardband = 0;   // MARGIN FOR TRIPPING OVERDRAW IN mW
 int Hiccup_5v_flag = 0;       // Setting flag for 5v rail
 int Hiccup_n12v_flag = 0;     // Setting flag for n12v rail
 int Hiccup_p12v_flag =0;      // Setting flag for p12v rail
-float ILIM_5V = 3000.0;        // max rail current for 5V rail in mA
-float ILIM_N12V = 4000.0;      // max rail current for -12V rail in mA
-float ILIM_12V = 8000.0;      // max rail current for 12V *converter* in mA
+float ILIM_5V = 3.0;        // max rail current for 5V rail in Amperes
+float ILIM_N12V = 4.0;      // max rail current for -12V rail in Amperes
+float ILIM_12V = 8.0;      // max rail current for 12V *converter* in Amperes
 
 uint8_t USB_PD_Interupt_Flag[USBPORT_MAX] ;
 uint8_t USB_PD_Interupt_PostponedFlag[USBPORT_MAX] ; 
@@ -240,21 +240,25 @@ int main(void)
   ina236_set_shunt_range(&ina_pos_12V, 0);
   ina236_set_shunt_range(&ina_5V, 0);
   ina236_set_shunt_range(&ina_neg_12V, 0);
+  HAL_Delay(1000);
 
   // Setting shunt cal register for each rail
   ina236_set_shuntcal(&ina_pos_12V);
   ina236_set_shuntcal(&ina_5V);
   ina236_set_shuntcal(&ina_neg_12V);
+  HAL_Delay(1000);
 
   // Setting current limits
   ina236_set_current_limit(&ina_5V, ILIM_5V);                                 // Setting constant current limit for 5V rail based on capability of converter
   ina236_set_current_limit(&ina_neg_12V, ILIM_N12V);                          // Setting constant current limit for n12V rail based on capability of converter
   ina236_set_current_limit(&ina_pos_12V, ILIM_12V);                           // Setting initial current limit for p12V rail assuming no draw from derivative rails
+  HAL_Delay(1000);
 
   // Enabling SOL Alert
   ina236_set_alertSOL(&ina_pos_12V);
   ina236_set_alertSOL(&ina_5V);
   ina236_set_alertSOL(&ina_neg_12V);
+  HAL_Delay(1000);
 
   /**** END SETUP INA236's ****/
   
@@ -283,21 +287,22 @@ int main(void)
     printf("-12V Bus Voltage is -%.2FV \r\n\r\n", volts_n12v);
 
     // Reading current from INA236
-    float amps_p12v = 1000.0*ina236_get_current(&ina_pos_12V);
-    float amps_5v = 1000.0*ina236_get_current(&ina_5V);
-    float amps_n12v = 1000.0*ina236_get_current(&ina_neg_12V);
+    float amps_p12v = ina236_get_current(&ina_pos_12V);
+    float amps_5v = ina236_get_current(&ina_5V);
+    float amps_n12v = ina236_get_current(&ina_neg_12V);
 
-    printf("5V Bus Current is %.2fmA \r\n", amps_5v);
-    printf("+12V Bus Current is %.2fmA \r\n", amps_p12v);
-    printf("-12V Bus current is %.2fmA \r\n\r\n", amps_n12v);
+    printf("5V Bus Current is %.2fA \r\n", amps_5v);
+    printf("+12V Bus Current is %.2fA \r\n", amps_p12v);
+    printf("-12V Bus current is %.2fA \r\n\r\n", amps_n12v);
 
 
     float draw_p12v = (amps_5v + amps_n12v);                                    // Calculating draw on p12v rail 
-    printf("Total Current Draw from +12V Rail is %.2fmA \r\n\r\n", draw_p12v);
+    printf("Total Current Draw from +12V Rail is %.2fA \r\n\r\n", draw_p12v);
     float ILIM_12V_dyn = (ILIM_12V - draw_p12v);                                // Updating p12v current limit based on 5v and n12v rail draw
-    printf("The Updated +12V Current Limit is %.2fmA \r\n\r\n", ILIM_12V_dyn);
+    printf("The Updated +12V Current Limit is %.2fA \r\n\r\n", ILIM_12V_dyn);
 
     ina236_set_current_limit(&ina_pos_12V, ILIM_12V_dyn);                       // Setting INA236 current limit with dynamic limit based on derivative rail draw
+    HAL_Delay(100);                                                             // This delay is probably unnecessary, but adding it during ILIM debug to slow down the dynamic current limit update
 
     // Reading power from INA236
     float power_p12V = ina236_get_power(&ina_pos_12V);

@@ -161,7 +161,7 @@ void usb_pd_init(uint8_t Usb_Port)
   USB_PD_Interupt_Flag[Usb_Port] =0;
   PD_status[Usb_Port].Port_Status.d8 = DataRW[ 3 ] ;
   PD_status[Usb_Port].CC_status.d8 = DataRW[6];
-  PD_status[Usb_Port].HWFault_status.d8 = DataRW[7];
+  PD_status[Usb_Port].HWFault_status.d8 = DataRW[8];
   PD_status[Usb_Port].Monitoring_status.d8=DataRW[5];
   TypeC_Only_status[Usb_Port] = 0;
   return;

@@ -41,6 +41,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define HICCUP_TIME_MS    1000
+#define DEBUG_INTERVAL    1000
+#define EFF_5V_CONV       0.9
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -55,7 +58,7 @@
 #define ENABLE_5P0_SUPPLY() HAL_GPIO_WritePin(DISABLE_5P0_GPIO_Port, DISABLE_5P0_Pin, 0)
 #define ENABLE_N12_SUPPLY() HAL_GPIO_WritePin(DISABLE_N12_GPIO_Port, DISABLE_N12_Pin, 0)
 #define DISABLE_N12_SUPPLY() HAL_GPIO_WritePin(DISABLE_N12_GPIO_Port, DISABLE_N12_Pin, 1)
-
+#define WITHIN_RANGE(x, target, range)  (x >= (target - range) && x <= (target + range))
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -78,9 +81,13 @@ int Plim_guardband = 0;   // MARGIN FOR TRIPPING OVERDRAW IN mW
 int Hiccup_5v_flag = 0;       // Setting flag for 5v rail
 int Hiccup_n12v_flag = 0;     // Setting flag for n12v rail
 int Hiccup_p12v_flag =0;      // Setting flag for p12v rail
+uint32_t hiccup_5v_ts = 0;
+uint32_t hiccup_p12v_ts = 0;
+uint32_t hiccup_n12v_ts = 0;
 float ILIM_5V = 3.0;        // max rail current for 5V rail in Amperes
 float ILIM_N12V = 4.0;      // max rail current for -12V rail in Amperes
 float ILIM_12V = 8.0;      // max rail current for 12V *converter* in Amperes
+uint32_t debug_stamp = 0;
 
 uint8_t USB_PD_Interupt_Flag[USBPORT_MAX] ;
 uint8_t USB_PD_Interupt_PostponedFlag[USBPORT_MAX] ; 
@@ -94,6 +101,7 @@ uint32_t VBUS_Current_limitation[USBPORT_MAX] = {5},Previous_VBUS_Current_limita
 extern USB_PD_StatusTypeDef PD_status[USBPORT_MAX] ;
 extern USB_PD_SNK_PDO_TypeDef PDO_SNK[USBPORT_MAX][3];
 extern USB_PD_SRC_PDOTypeDef PDO_FROM_SRC[USBPORT_MAX][7];
+extern STUSB_GEN1S_RDO_REG_STATUS_RegTypeDef Nego_RDO[USBPORT_MAX];
 extern uint8_t PDO_FROM_SRC_Valid[USBPORT_MAX];
 extern uint8_t PDO_FROM_SRC_Num_Sel[USBPORT_MAX];
 extern uint8_t PDO_FROM_SRC_Num[USBPORT_MAX];
@@ -152,7 +160,10 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* ENSURE EXTERNAL SUPPLIES START IN OFF STATE */
-  
+  // Send_Soft_reset_Message(usb_port_id);
+  // SW_reset_by_Reg(usb_port_id);
+  // HAL_Delay(1000);
+
   ENABLE_PRIMARY_12V();
   DISABLE_OVRLD_LED();
   ENABLE_PDGOOD_LED();  
@@ -171,43 +182,56 @@ int main(void)
 
   memset((uint32_t *)PDO_FROM_SRC[usb_port_id], 0, 7);
   memset((uint32_t *)PDO_SNK[usb_port_id], 0, 3);
-  
+
   usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
 
   HAL_Delay(1000); // allow STUSB4500 to initialize
-
-  Read_SNK_PDO(usb_port_id);
-
-  
 
   Print_PDO_FROM_SRC(usb_port_id);
 
   Plim = Find_Max_SRC_PDO(usb_port_id); // Returns negotiated power level in mW
 
   printf("the power limit is %dmW \r\n", Plim);
+  Send_Soft_reset_Message(usb_port_id); // forces re-negotiation with newly updated PDO2
 
-  HAL_Delay(500);
-
-  // This code block got moved to USB PD CORE "Find_Max_SRC_PDO" Function and added conditional statement for +15V Vin
-            // DISABLE_PRIMARY_12V();
-            //for(int i=0; i<25; i++)
-            //{
-            //  __NOP();
-            //}
-            // ENABLE_PRIMARY_12V();
-
-  Print_PDO_FROM_SRC(usb_port_id);
-
-  push_button_Action_Flag[usb_port_id] = 0;
+  HAL_Delay(500); // give time for negotiation to occur and rail to stabilize
+  
   Read_RDO(usb_port_id);
-
-
+  
   Print_RDO(usb_port_id);
+
+  // we can't move this elsewhere because we need to give time for the new
+  // negotiated voltage to come up and stabilize.
+  float nego_voltage = (float ) PDO_FROM_SRC[usb_port_id][Nego_RDO[usb_port_id].b.Object_Pos - 1].fix.Voltage/20.0;
+  if (nego_voltage >= 12.0 && nego_voltage <= 16.0){
+    printf("Negotiated voltage is %.2fV - Pulsing main converter off.", nego_voltage);
+    DISABLE_PRIMARY_12V();
+    for(int i=0; i<25; i++)
+    {
+      __NOP();
+    }
+    ENABLE_PRIMARY_12V();
+  }
+
+  if(WITHIN_RANGE(nego_voltage, 5.0, 2.0))
+  {
+    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 1);
+  }
+  else if(WITHIN_RANGE(nego_voltage, 9.0, 2.0))
+  {
+    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 1);
+  }
+  else if (WITHIN_RANGE(nego_voltage, 15.0, 2.0))
+  {
+    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 1);
+  }
+  else if (WITHIN_RANGE(nego_voltage, 20.0, 2.0))
+  {
+    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 1);
+  }
 
   connection_flag[usb_port_id] = 1;
   Previous_VBUS_Current_limitation[usb_port_id] = VBUS_Current_limitation[usb_port_id];
-
-
 
   /**** BEGIN SETUP INA236's ****/
  
@@ -240,32 +264,27 @@ int main(void)
   ina236_set_shunt_range(&ina_pos_12V, 0);
   ina236_set_shunt_range(&ina_5V, 0);
   ina236_set_shunt_range(&ina_neg_12V, 0);
-  HAL_Delay(1000);
+  HAL_Delay(250);
 
   // Setting shunt cal register for each rail
   ina236_set_shuntcal(&ina_pos_12V);
   ina236_set_shuntcal(&ina_5V);
   ina236_set_shuntcal(&ina_neg_12V);
-  HAL_Delay(1000);
+  HAL_Delay(250);
 
   // Setting current limits
   ina236_set_current_limit(&ina_5V, ILIM_5V);                                 // Setting constant current limit for 5V rail based on capability of converter
   ina236_set_current_limit(&ina_neg_12V, ILIM_N12V);                          // Setting constant current limit for n12V rail based on capability of converter
   ina236_set_current_limit(&ina_pos_12V, ILIM_12V);                           // Setting initial current limit for p12V rail assuming no draw from derivative rails
-  HAL_Delay(1000);
+  HAL_Delay(250);
 
   // Enabling SOL Alert
   ina236_set_alertSOL(&ina_pos_12V);
   ina236_set_alertSOL(&ina_5V);
   ina236_set_alertSOL(&ina_neg_12V);
-  HAL_Delay(1000);
+  HAL_Delay(250);
 
   /**** END SETUP INA236's ****/
-  
- //HAL_Delay(50);
- //DISABLE_PRIMARY_12V();
- //HAL_Delay(1);
- //ENABLE_PRIMARY_12V();
   
   /* USER CODE END 2 */
 
@@ -282,25 +301,16 @@ int main(void)
     float volts_5v = ina236_get_voltage(&ina_5V);
     float volts_n12v = ina236_get_voltage(&ina_neg_12V);
 
-    printf("5V Bus Voltage is %.2fV \r\n", volts_5v);
-    printf("+12V Bus Voltage is %.2fV \r\n", volts_p12v);
-    printf("-12V Bus Voltage is -%.2FV \r\n\r\n", volts_n12v);
-
     // Reading current from INA236
     float amps_p12v = ina236_get_current(&ina_pos_12V);
     float amps_5v = ina236_get_current(&ina_5V);
     float amps_n12v = ina236_get_current(&ina_neg_12V);
 
-    printf("5V Bus Current is %.2fA \r\n", amps_5v);
-    printf("+12V Bus Current is %.2fA \r\n", amps_p12v);
-    printf("-12V Bus current is %.2fA \r\n\r\n", amps_n12v);
-
-
-    float draw_p12v = (amps_5v + amps_n12v);                                    // Calculating draw on p12v rail 
-    printf("Total Current Draw from +12V Rail is %.2fA \r\n\r\n", draw_p12v);
-    float ILIM_12V_dyn = (ILIM_12V - draw_p12v);                                // Updating p12v current limit based on 5v and n12v rail draw
-    printf("The Updated +12V Current Limit is %.2fA \r\n\r\n", ILIM_12V_dyn);
-
+    float amps_5v_in = (volts_5v*amps_5v)/(EFF_5V_CONV*volts_p12v);
+    float extra_draw_p12v = (amps_5v_in + amps_n12v);                           // Calculating draw on p12v rail NOT including the +12V output
+    float draw_p12v = extra_draw_p12v + amps_p12v;                              // Total draw on the +12V rail
+    float ILIM_12V_dyn = (ILIM_12V - extra_draw_p12v);                          // Updating p12v current limit based on 5v and n12v rail draw
+    
     ina236_set_current_limit(&ina_pos_12V, ILIM_12V_dyn);                       // Setting INA236 current limit with dynamic limit based on derivative rail draw
     HAL_Delay(100);                                                             // This delay is probably unnecessary, but adding it during ILIM debug to slow down the dynamic current limit update
 
@@ -310,37 +320,39 @@ int main(void)
     float power_5V = 1000.0*ina236_get_power(&ina_5V);                          // Returns +5V bus power in mW
 
     int tot_power = (int)(power_p12V + power_n12V + power_5V);                  // Calculating total power in mW
-
-    printf("The power draw of the 5V bus is %.2fmW\r\n", power_5V);
-    printf("The power draw of the -12V bus is %.2fmW\r\n", power_n12V);
-    printf("The power draw of the +12V bus is %.2fmW\r\n\r\n", power_p12V);
-
-    printf("The negotiated power limit is %dmW\r\n\r\n", Plim);
-
+    
+    if (HAL_GetTick() - debug_stamp > DEBUG_INTERVAL){
+      debug_stamp = HAL_GetTick();
+      printf("5V Bus: %.2fV, %.2fA, %.2fmW \r\n", volts_5v, amps_5v, power_5V);
+      printf("+12V Bus: %.2fV, %.2fA, %.2fmW \r\n", volts_p12v, amps_p12v, power_p12V);
+      printf("-12V Bus: -%.2fV, %.2fA, %.2fmW \r\n\r\n", volts_n12v, amps_n12v, power_n12V);
+      printf("Total Current from +12V Rail: %.2fA \r\n\r\n", draw_p12v);
+      printf("The Updated +12V Current Limit is %.2fA \r\n\r\n", ILIM_12V_dyn);
+    }else if (HAL_GetTick() < debug_stamp){
+      // tick counter has wrapped around
+      debug_stamp = 0;
+    }
 
     // Hiccup control Restart
 
-    if(Hiccup_5v_flag == 1)
+    if(Hiccup_5v_flag == 1 && HAL_GetTick() - hiccup_5v_ts > HICCUP_TIME_MS)
     {
-      HAL_Delay(1000);
       ENABLE_5P0_SUPPLY();
       Hiccup_5v_flag = 0;
       DISABLE_OVRLD_LED();
       ENABLE_PDGOOD_LED();
     }
 
-    if (Hiccup_n12v_flag == 1)
+    if (Hiccup_n12v_flag == 1 && HAL_GetTick() - hiccup_n12v_ts > HICCUP_TIME_MS)
     {
-      HAL_Delay(1000);
       ENABLE_N12_SUPPLY();
       Hiccup_n12v_flag = 0;
       DISABLE_OVRLD_LED();
       ENABLE_PDGOOD_LED();
     }
 
-    if (Hiccup_p12v_flag == 1)
+    if (Hiccup_p12v_flag == 1 && HAL_GetTick() - hiccup_p12v_ts > HICCUP_TIME_MS)
     {
-      HAL_Delay(1000);
       ENABLE_PRIMARY_12V();
       Hiccup_p12v_flag = 0;
       DISABLE_OVRLD_LED();
@@ -354,6 +366,7 @@ int main(void)
       ENABLE_OVRLD_LED();
       DISABLE_PRIMARY_12V();
       Hiccup_p12v_flag = 1;             // If total system power exceeds limit - guardband, hiccup entire system (primary)
+      hiccup_p12v_ts = HAL_GetTick();
       printf("Total power is exceeded");
     }
     
@@ -363,7 +376,7 @@ int main(void)
       ENABLE_PDGOOD_LED();
     }
 
-    HAL_Delay(1000);            // delay added for the purposes of debugging and slowing down terminal output
+    HAL_Delay(100);            // delay now limits rate of polling INA's
     
   }
   /* USER CODE END 3 */
@@ -410,65 +423,22 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-int usb_pd_state_machine(uint8_t usb_port){
-  int status = Get_Device_STATUS(usb_port);
-
-  switch(status){
-    case Not_Connected:
-      break;
-    case TypeC_Only:
-      break;
-    case Connected_Unknown_SRC_PDOs:{
-      Send_Soft_reset_Message(usb_port);
-      Final_Nego_done[usb_port] = 0;
-      break;
-    }
-    case Connected_5V_PD:
-      break;
-    case Connected_no_Match_found:
-      break;
-    case Connected_Matching_ongoing:{
-      Send_Soft_reset_Message(usb_port);
-      Final_Nego_done[usb_port] = 0;
-      break;
-    }
-    case Connected_Mached:{
-      break;
-    }
-    case Not_Connected_attached_wait:
-      break;
-    case Hard_Reset_ongoing:{
-      break;
-    }
-    default:
-      break;
-  }
-
-  if(VBUS_Current_limitation[usb_port] != Previous_VBUS_Current_limitation[usb_port]){
-    Previous_VBUS_Current_limitation[usb_port] = VBUS_Current_limitation[usb_port];
-  }
-}
-
 // Hiccup control
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-  INA236_t* ina;
   if(GPIO_Pin == ina_5V.int_pin){
-    ina = &ina_5V;
     DISABLE_5PO_SUPPLY();
     Hiccup_5v_flag = 1;
+    hiccup_5v_ts = HAL_GetTick();
     DISABLE_PDGOOD_LED();
     ENABLE_OVRLD_LED();
-    printf("5v rail is disabled \r\n");
   }else if(GPIO_Pin == ina_pos_12V.int_pin){
-    ina = &ina_pos_12V;
     DISABLE_PRIMARY_12V();
     Hiccup_p12v_flag = 1;
-    printf("P12v rail is disabled \r\n");
+    hiccup_p12v_ts = HAL_GetTick();
   }else if(GPIO_Pin == ina_neg_12V.int_pin){
-    ina = &ina_neg_12V;
     DISABLE_N12_SUPPLY();
     Hiccup_n12v_flag = 1;
-    printf("N12v rail is disabled \r\n");
+    hiccup_n12v_ts = HAL_GetTick();
   }else if (GPIO_Pin == ALERT_A_Pin) {
     ALARM_MANAGEMENT(0);
   }

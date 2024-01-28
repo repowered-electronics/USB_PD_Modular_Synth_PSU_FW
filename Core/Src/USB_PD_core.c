@@ -563,7 +563,7 @@ int Find_Matching_SRC_PDO(uint8_t Usb_Port,int Min_Power,int Min_V , int Max_V)
 int Find_Max_SRC_PDO(uint8_t Usb_Port)
 {
   int Pmax = 0;
-  int i_PDOmax;
+  int i_PDOmax = 0;
   int PDO_V;
   int PDO_I;
   int PDO_P;
@@ -594,34 +594,12 @@ int Find_Max_SRC_PDO(uint8_t Usb_Port)
         }
       }
     }
+    // Request_SRC_PDO_NUMBER(Usb_Port, i_PDOmax + 1);
     PDO_V = PDO_FROM_SRC[Usb_Port][i_PDOmax].fix.Voltage * 50;
     PDO_I = PDO_FROM_SRC[Usb_Port][i_PDOmax].fix.Max_Operating_Current * 10;
 
     Update_PDO(Usb_Port, 2, PDO_V, PDO_I);
     Update_Valid_PDO_Number(Usb_Port, 2);
-
-    if(Vmax == 5000)
-    {
-      HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 1);
-    }
-    else if(Vmax == 9000)
-    {
-      HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 1);
-    }
-    else if (Vmax == 15000)
-    {
-      HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 1);
-      HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 1);
-      for (int i=0; i<25; i++)
-      {
-        __NOP();
-      }
-      HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 0);
-    }
-    else if (Vmax == 20000)
-    {
-      HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 1);
-    }
         
     printf("pmax is %i \r\n", Pmax);
     printf("vmax is %i \r\n", Vmax);

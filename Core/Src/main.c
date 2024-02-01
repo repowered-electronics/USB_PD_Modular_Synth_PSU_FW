@@ -32,6 +32,8 @@
 #endif
 #include "USB_PD_core.h"
 #include "ina236.h"
+#include "u8g2/u8g2.h"
+#include "display.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -109,6 +111,13 @@ extern uint8_t Policy_Engine_State[USBPORT_MAX];
 extern uint8_t Go_disable_once[USBPORT_MAX];
 extern uint8_t Final_Nego_done[USBPORT_MAX] ;
 extern uint8_t Core_Process_suspended ;
+
+/* OLED THINGS */
+u8g2_t oled; // struct to contain data for one display
+display_t display = {
+  .oled = &oled
+}; // struct to contain more stuff about the display
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -117,7 +126,8 @@ void SystemClock_Config(void);
 
 void _putchar(char character);
 extern void nvm_flash(uint8_t Usb_Port);
-int usb_pd_state_machine(uint8_t usb_port);
+uint8_t u8x8_byte_hw_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr);
+uint8_t gpio_and_delay_callback(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr);
 
 /* USER CODE END PFP */
 
@@ -285,7 +295,14 @@ int main(void)
   HAL_Delay(250);
 
   /**** END SETUP INA236's ****/
-  
+
+  /**** BEGIN SETUP OLED *****/
+  u8g2_Setup_ssd1306_i2c_128x64_noname_1(&oled, U8G2_R1, u8x8_byte_hw_i2c, gpio_and_delay_callback);
+  u8g2_InitDisplay(&oled); // send init sequence to the display, display is in sleep mode after this,
+  u8g2_SetPowerSave(&oled, 0); // wake up display
+
+  /**** END SETUP OLED *****/
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -447,6 +464,126 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 void _putchar(char character){
   HAL_UART_Transmit(&huart1, &character, 1, 1);
 }
+
+/**
+ * Handle hardware I2C comms
+*/
+uint8_t u8x8_byte_hw_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr){
+  uint8_t *data;
+
+  switch(msg)
+  {
+    case U8X8_MSG_BYTE_SEND:
+      data = (uint8_t *)arg_ptr;
+      HAL_I2C_Master_Transmit(&hi2c1, u8x8_GetI2CAddress(u8x8), data, arg_int, 50);
+      break;
+      
+    case U8X8_MSG_BYTE_INIT:
+      // i2c_init(u8x8);
+      break;
+    case U8X8_MSG_BYTE_SET_DC:
+      break;
+    case U8X8_MSG_BYTE_START_TRANSFER:
+      // i2c_start(u8x8);
+      // i2c_write_byte(u8x8, u8x8_GetI2CAddress(u8x8));
+      //i2c_write_byte(u8x8, 0x078);
+      break;
+    case U8X8_MSG_BYTE_END_TRANSFER:
+      // i2c_stop(u8x8);
+      break;
+    default:
+      return 0;
+  }
+  return 1;
+}
+
+
+uint8_t gpio_and_delay_callback(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr){
+  switch(msg)
+  {
+    case U8X8_MSG_GPIO_AND_DELAY_INIT:	// called once during init phase of u8g2/u8x8
+      break;							// can be used to setup pins
+    case U8X8_MSG_DELAY_NANO:			// delay arg_int * 1 nano second
+      break;    
+    case U8X8_MSG_DELAY_100NANO:		// delay arg_int * 100 nano seconds
+        for(int i = 0; i < arg_int*7; i++){
+          __NOP();
+        }
+      break;
+    case U8X8_MSG_DELAY_10MICRO:		// delay arg_int * 10 micro seconds
+        for(int i = 0; i < arg_int*200; i++){
+          __NOP();
+        }
+      break;
+    case U8X8_MSG_DELAY_MILLI:			// delay arg_int * 1 milli second
+      HAL_Delay(arg_int);
+      break;
+    case U8X8_MSG_DELAY_I2C:				// arg_int is the I2C speed in 100KHz, e.g. 4 = 400 KHz
+      if (arg_int == 1){
+        // this should be ~very roughly 5us
+        for(int i = 0; i < 100; i++){
+          __NOP();
+        }
+      }else{
+        // this should be ~very roughly 1.25us
+        for(int i = 0; i < 25; i++){
+          __NOP();
+        }
+      }
+      break;							// arg_int=1: delay by 5us, arg_int = 4: delay by 1.25us
+    case U8X8_MSG_GPIO_D0:				// D0 or SPI clock pin: Output level in arg_int
+    //case U8X8_MSG_GPIO_SPI_CLOCK:
+      break;
+    case U8X8_MSG_GPIO_D1:				// D1 or SPI data pin: Output level in arg_int
+    //case U8X8_MSG_GPIO_SPI_DATA:
+      break;
+    case U8X8_MSG_GPIO_D2:				// D2 pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_D3:				// D3 pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_D4:				// D4 pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_D5:				// D5 pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_D6:				// D6 pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_D7:				// D7 pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_E:				// E/WR pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_CS:				// CS (chip select) pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_DC:				// DC (data/cmd, A0, register select) pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_RESET:			// Reset pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_CS1:				// CS1 (chip select) pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_CS2:				// CS2 (chip select) pin: Output level in arg_int
+      break;
+    case U8X8_MSG_GPIO_I2C_CLOCK:		// arg_int=0: Output low at I2C clock pin
+      break;							// arg_int=1: Input dir with pullup high for I2C clock pin
+    case U8X8_MSG_GPIO_I2C_DATA:			// arg_int=0: Output low at I2C data pin
+      break;							// arg_int=1: Input dir with pullup high for I2C data pin
+    case U8X8_MSG_GPIO_MENU_SELECT:
+      // u8x8_SetGPIOResult(u8x8, /* get menu select pin state */ 0);
+      break;
+    case U8X8_MSG_GPIO_MENU_NEXT:
+      // u8x8_SetGPIOResult(u8x8, /* get menu next pin state */ 0);
+      break;
+    case U8X8_MSG_GPIO_MENU_PREV:
+      // u8x8_SetGPIOResult(u8x8, /* get menu prev pin state */ 0);
+      break;
+    case U8X8_MSG_GPIO_MENU_HOME:
+      // u8x8_SetGPIOResult(u8x8, /* get menu home pin state */ 0);
+      break;
+    default:
+      // u8x8_SetGPIOResult(u8x8, 1);			// default return value
+      break;
+  }
+  return 1;
+}
+
 /* USER CODE END 4 */
 
 /**

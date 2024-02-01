@@ -1,7 +1,8 @@
 #include "stm32f1xx_hal.h"
+#include "u8g2/u8g2.h"
 
 typedef struct display_struct {
-    I2C_HandleTypeDef* hi2c;
+    u8g2_t* oled;
     uint8_t addr;
     uint8_t adc_range;
     float shunt; // shunt resistance in Ohms

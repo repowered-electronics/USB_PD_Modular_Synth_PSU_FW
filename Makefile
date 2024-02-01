@@ -61,7 +61,8 @@ Core/Src/system_stm32f1xx.c \
 Core/Src/USBPD_CUST_NVM_API.c \
 Core/Src/ina236.c \
 Core/Src/USB_PD_core.c \
-Core/Src/printf.c
+Core/Src/printf.c \
+Core/Src/display.c \
 
 
 # ASM sources

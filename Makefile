@@ -61,7 +61,8 @@ Core/Src/system_stm32f1xx.c \
 Core/Src/USBPD_CUST_NVM_API.c \
 Core/Src/ina236.c \
 Core/Src/USB_PD_core.c \
-Core/Src/printf.c
+Core/Src/printf.c \
+Core/Src/display.c \
 
 
 # ASM sources
@@ -123,7 +124,8 @@ C_INCLUDES =  \
 -IDrivers/STM32F1xx_HAL_Driver/Inc \
 -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \
--IDrivers/CMSIS/Include
+-IDrivers/CMSIS/Include \
+-ICore/Inc/u8g2
 
 
 # compile gcc flags

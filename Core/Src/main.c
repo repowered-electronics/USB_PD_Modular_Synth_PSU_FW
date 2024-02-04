@@ -297,10 +297,14 @@ int main(void)
   /**** END SETUP INA236's ****/
 
   /**** BEGIN SETUP OLED *****/
-  u8g2_Setup_ssd1306_i2c_128x64_noname_1(&oled, U8G2_R1, u8x8_byte_hw_i2c, gpio_and_delay_callback);
+  u8g2_Setup_ssd1306_i2c_128x32_univision_f(&oled, U8G2_R3, u8x8_byte_hw_i2c, gpio_and_delay_callback);
   u8g2_InitDisplay(&oled); // send init sequence to the display, display is in sleep mode after this,
   u8g2_SetPowerSave(&oled, 0); // wake up display
-
+  u8g2_ClearDisplay(&oled);
+  u8g2_SetFont(&oled, u8g2_font_6x13_tf);
+  u8g2_SetFontDirection(&oled, 1);
+  int pos_x = 4;
+  int pos_y = 4;
   /**** END SETUP OLED *****/
 
   /* USER CODE END 2 */
@@ -392,7 +396,9 @@ int main(void)
       DISABLE_OVRLD_LED();
       ENABLE_PDGOOD_LED();
     }
-
+    u8g2_ClearBuffer(&oled);
+    u8g2_DrawStr(&oled, pos_x, pos_y, "MATT = SLUT");
+    u8g2_SendBuffer(&oled);
     HAL_Delay(100);            // delay now limits rate of polling INA's
     
   }
@@ -470,12 +476,17 @@ void _putchar(char character){
 */
 uint8_t u8x8_byte_hw_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr){
   uint8_t *data;
-
+  static uint8_t buffer[128];
+  static uint8_t buf_ind;
   switch(msg)
   {
     case U8X8_MSG_BYTE_SEND:
       data = (uint8_t *)arg_ptr;
-      HAL_I2C_Master_Transmit(&hi2c1, u8x8_GetI2CAddress(u8x8), data, arg_int, 50);
+      while(arg_int > 0){
+        buffer[buf_ind++] = *data;
+        data++;
+        arg_int--;
+      }
       break;
       
     case U8X8_MSG_BYTE_INIT:
@@ -490,6 +501,8 @@ uint8_t u8x8_byte_hw_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_p
       break;
     case U8X8_MSG_BYTE_END_TRANSFER:
       // i2c_stop(u8x8);
+      HAL_I2C_Master_Transmit(&hi2c2, u8x8_GetI2CAddress(u8x8), buffer, buf_ind, 1000);
+      buf_ind = 0;
       break;
     default:
       return 0;

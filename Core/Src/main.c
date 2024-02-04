@@ -82,7 +82,7 @@ int Plim = 0;             // Power limit from find max pdo
 int Plim_guardband = 0;   // MARGIN FOR TRIPPING OVERDRAW IN mW
 int Hiccup_5v_flag = 0;       // Setting flag for 5v rail
 int Hiccup_n12v_flag = 0;     // Setting flag for n12v rail
-int Hiccup_p12v_flag =0;      // Setting flag for p12v rail
+int Hiccup_p12v_flag = 0;      // Setting flag for p12v rail
 uint32_t hiccup_5v_ts = 0;
 uint32_t hiccup_p12v_ts = 0;
 uint32_t hiccup_n12v_ts = 0;
@@ -297,7 +297,7 @@ int main(void)
   /**** END SETUP INA236's ****/
 
   /**** BEGIN SETUP OLED *****/
-  u8g2_Setup_ssd1306_i2c_128x32_univision_f(&oled, U8G2_R3, u8x8_byte_hw_i2c, gpio_and_delay_callback);
+  u8g2_Setup_ssd1306_i2c_128x32_univision_f(&oled, U8G2_R2, u8x8_byte_hw_i2c, gpio_and_delay_callback);
   u8g2_InitDisplay(&oled); // send init sequence to the display, display is in sleep mode after this,
   u8g2_SetPowerSave(&oled, 0); // wake up display
   u8g2_ClearDisplay(&oled);
@@ -397,7 +397,42 @@ int main(void)
       ENABLE_PDGOOD_LED();
     }
     u8g2_ClearBuffer(&oled);
-    u8g2_DrawStr(&oled, pos_x, pos_y, "MATT = SLUT");
+
+    char buffer[10];
+
+    float p5VTopLine = 115.0;
+    u8g2_DrawStr(&oled, p5VTopLine, 0.0, "+5V");
+    sprintf(buffer, "%.1fV", volts_5v);
+    u8g2_DrawStr(&oled, p5VTopLine-10.0, 0.0, buffer);
+    sprintf(buffer, "%.1fA", amps_5v);
+    u8g2_DrawStr(&oled, p5VTopLine-20.0, 0.0, buffer);
+
+    u8g2_DrawLine(&oled, 90, 0, 90, 32);
+
+    float p12VTopLine = 75.0;
+    u8g2_DrawStr(&oled, p12VTopLine, 0.0, "+12V");
+    sprintf(buffer, "%.1fV", volts_p12v);
+    u8g2_DrawStr(&oled, p12VTopLine-10.0, 0.0, buffer);
+    sprintf(buffer, "%.1fA", amps_p12v);
+    u8g2_DrawStr(&oled, p12VTopLine-20.0, 0.0, buffer);
+    
+    u8g2_DrawLine(&oled, 50, 0, 50, 32);
+
+    float n12VTopLine = 35.0;
+    u8g2_DrawStr(&oled, n12VTopLine, 0.0, "-12V");
+    sprintf(buffer, "%.1fV", volts_n12v);
+    u8g2_DrawStr(&oled, n12VTopLine-10.0, 0.0, buffer);
+    sprintf(buffer, "%.1fA", amps_n12v);
+    u8g2_DrawStr(&oled, n12VTopLine-20.0, 0.0, buffer);
+
+    if (Hiccup_p12v_flag || Hiccup_5v_flag || Hiccup_n12v_flag){
+      u8g2_DrawStr(&oled, 0.0, 0.0, "OVLD!!");
+    }
+    else {
+      sprintf(buffer, "%.1fV", nego_voltage);
+      u8g2_DrawStr(&oled, 0.0, 0.0, buffer);
+    }
+    
     u8g2_SendBuffer(&oled);
     HAL_Delay(100);            // delay now limits rate of polling INA's
     

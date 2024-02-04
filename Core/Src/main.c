@@ -83,6 +83,7 @@ int Plim_guardband = 0;   // MARGIN FOR TRIPPING OVERDRAW IN mW
 int Hiccup_5v_flag = 0;       // Setting flag for 5v rail
 int Hiccup_n12v_flag = 0;     // Setting flag for n12v rail
 int Hiccup_p12v_flag = 0;      // Setting flag for p12v rail
+int ina_alerts_enabled = 0;    // will be used to gate servicing of alert pin interrupts
 uint32_t hiccup_5v_ts = 0;
 uint32_t hiccup_p12v_ts = 0;
 uint32_t hiccup_n12v_ts = 0;
@@ -128,6 +129,8 @@ void _putchar(char character);
 extern void nvm_flash(uint8_t Usb_Port);
 uint8_t u8x8_byte_hw_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr);
 uint8_t gpio_and_delay_callback(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr);
+void disable_ina_ints();
+void enable_ina_ints();
 
 /* USER CODE END PFP */
 
@@ -177,6 +180,7 @@ int main(void)
   ENABLE_PRIMARY_12V();
   DISABLE_OVRLD_LED();
   ENABLE_PDGOOD_LED();  
+  disable_ina_ints(); // start by not acting on interrupts from the INAs
   /* SETUP USB PD STUFF */
   
   hi2c[0] = &hi2c1;
@@ -274,26 +278,27 @@ int main(void)
   ina236_set_shunt_range(&ina_pos_12V, 0);
   ina236_set_shunt_range(&ina_5V, 0);
   ina236_set_shunt_range(&ina_neg_12V, 0);
-  HAL_Delay(250);
+  HAL_Delay(5);
 
   // Setting shunt cal register for each rail
   ina236_set_shuntcal(&ina_pos_12V);
   ina236_set_shuntcal(&ina_5V);
   ina236_set_shuntcal(&ina_neg_12V);
-  HAL_Delay(250);
+  HAL_Delay(5);
 
   // Setting current limits
   ina236_set_current_limit(&ina_5V, ILIM_5V);                                 // Setting constant current limit for 5V rail based on capability of converter
   ina236_set_current_limit(&ina_neg_12V, ILIM_N12V);                          // Setting constant current limit for n12V rail based on capability of converter
   ina236_set_current_limit(&ina_pos_12V, ILIM_12V);                           // Setting initial current limit for p12V rail assuming no draw from derivative rails
-  HAL_Delay(250);
+  HAL_Delay(5);
 
   // Enabling SOL Alert
   ina236_set_alertSOL(&ina_pos_12V);
   ina236_set_alertSOL(&ina_5V);
   ina236_set_alertSOL(&ina_neg_12V);
-  HAL_Delay(250);
+  HAL_Delay(5);
 
+  enable_ina_ints();
   /**** END SETUP INA236's ****/
 
   /**** BEGIN SETUP OLED *****/
@@ -303,8 +308,6 @@ int main(void)
   u8g2_ClearDisplay(&oled);
   u8g2_SetFont(&oled, u8g2_font_6x13_tf);
   u8g2_SetFontDirection(&oled, 1);
-  int pos_x = 4;
-  int pos_y = 4;
   /**** END SETUP OLED *****/
 
   /* USER CODE END 2 */
@@ -483,17 +486,17 @@ void SystemClock_Config(void)
 
 // Hiccup control
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-  if(GPIO_Pin == ina_5V.int_pin){
+  if(GPIO_Pin == ina_5V.int_pin && ina_alerts_enabled){
     DISABLE_5PO_SUPPLY();
     Hiccup_5v_flag = 1;
     hiccup_5v_ts = HAL_GetTick();
     DISABLE_PDGOOD_LED();
     ENABLE_OVRLD_LED();
-  }else if(GPIO_Pin == ina_pos_12V.int_pin){
+  }else if(GPIO_Pin == ina_pos_12V.int_pin && ina_alerts_enabled){
     DISABLE_PRIMARY_12V();
     Hiccup_p12v_flag = 1;
     hiccup_p12v_ts = HAL_GetTick();
-  }else if(GPIO_Pin == ina_neg_12V.int_pin){
+  }else if(GPIO_Pin == ina_neg_12V.int_pin && ina_alerts_enabled){
     DISABLE_N12_SUPPLY();
     Hiccup_n12v_flag = 1;
     hiccup_n12v_ts = HAL_GetTick();
@@ -631,6 +634,15 @@ uint8_t gpio_and_delay_callback(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void
   }
   return 1;
 }
+
+void disable_ina_ints(){
+  ina_alerts_enabled = 0;
+}
+
+void enable_ina_ints(){
+  ina_alerts_enabled = 1;
+}
+
 
 /* USER CODE END 4 */
 

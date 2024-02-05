@@ -199,6 +199,8 @@ int main(void)
 
   usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
 
+  Send_Soft_reset_Message(usb_port_id); // forces re-negotiation with newly updated PDO2
+
   HAL_Delay(1000); // allow STUSB4500 to initialize
 
   Print_PDO_FROM_SRC(usb_port_id);
@@ -206,7 +208,6 @@ int main(void)
   Plim = Find_Max_SRC_PDO(usb_port_id); // Returns negotiated power level in mW
 
   printf("the power limit is %dmW \r\n", Plim);
-  Send_Soft_reset_Message(usb_port_id); // forces re-negotiation with newly updated PDO2
 
   HAL_Delay(500); // give time for negotiation to occur and rail to stabilize
   
@@ -330,6 +331,7 @@ int main(void)
     float amps_5v = ina236_get_current(&ina_5V);
     float amps_n12v = ina236_get_current(&ina_neg_12V);
 
+
     float amps_5v_in = (volts_5v*amps_5v)/(EFF_5V_CONV*volts_p12v);
     float extra_draw_p12v = (amps_5v_in + amps_n12v);                           // Calculating draw on p12v rail NOT including the +12V output
     float draw_p12v = extra_draw_p12v + amps_p12v;                              // Total draw on the +12V rail
@@ -403,31 +405,55 @@ int main(void)
 
     char buffer[10];
 
-    float p5VTopLine = 115.0;
-    u8g2_DrawStr(&oled, p5VTopLine, 0.0, "+5V");
-    sprintf(buffer, "%.1fV", volts_5v);
-    u8g2_DrawStr(&oled, p5VTopLine-10.0, 0.0, buffer);
-    sprintf(buffer, "%.1fA", amps_5v);
-    u8g2_DrawStr(&oled, p5VTopLine-20.0, 0.0, buffer);
 
+    //Line to Separate regulators
     u8g2_DrawLine(&oled, 90, 0, 90, 32);
 
-    float p12VTopLine = 75.0;
+    //Report +12V Stats
+    float p12VTopLine = 115.0;
     u8g2_DrawStr(&oled, p12VTopLine, 0.0, "+12V");
     sprintf(buffer, "%.1fV", volts_p12v);
     u8g2_DrawStr(&oled, p12VTopLine-10.0, 0.0, buffer);
-    sprintf(buffer, "%.1fA", amps_p12v);
+    
+    if(amps_p12v > 0.1) {
+      sprintf(buffer, "%.2fA", amps_p12v);
+    }
+    else {
+      sprintf(buffer, "%.0fmA", 1000*amps_p12v);
+    }
     u8g2_DrawStr(&oled, p12VTopLine-20.0, 0.0, buffer);
     
-    u8g2_DrawLine(&oled, 50, 0, 50, 32);
-
-    float n12VTopLine = 35.0;
+    //Report -12V Stats
+    float n12VTopLine = 75.0;
     u8g2_DrawStr(&oled, n12VTopLine, 0.0, "-12V");
     sprintf(buffer, "%.1fV", volts_n12v);
     u8g2_DrawStr(&oled, n12VTopLine-10.0, 0.0, buffer);
-    sprintf(buffer, "%.1fA", amps_n12v);
+
+    if (amps_n12v > 0.1){
+      sprintf(buffer, "%.2fA", amps_n12v);
+    }
+    else {
+      sprintf(buffer, "%.0fmA", 1000*amps_n12v);
+
+    }
     u8g2_DrawStr(&oled, n12VTopLine-20.0, 0.0, buffer);
 
+    //Line to Separate regulators
+    u8g2_DrawLine(&oled, 50, 0, 50, 32);
+
+    //Report +5V Stas
+    float p5VTopLine = 35.0;
+    u8g2_DrawStr(&oled, p5VTopLine, 0.0, "+5V");
+    sprintf(buffer, "%.2fV", volts_5v);
+    u8g2_DrawStr(&oled, p5VTopLine-10.0, 0.0, buffer);
+    if(amps_5v > 0.1) {
+      sprintf(buffer, "%.2fA", amps_5v);
+    }
+    else {
+      sprintf(buffer, "%.0fmA", 1000*amps_5v);
+    }
+    u8g2_DrawStr(&oled, p5VTopLine-20.0, 0.0, buffer);
+    
     if (Hiccup_p12v_flag || Hiccup_5v_flag || Hiccup_n12v_flag){
       u8g2_DrawStr(&oled, 0.0, 0.0, "OVLD!!");
     }
@@ -435,7 +461,7 @@ int main(void)
       sprintf(buffer, "%.1fV", nego_voltage);
       u8g2_DrawStr(&oled, 0.0, 0.0, buffer);
     }
-    
+
     u8g2_SendBuffer(&oled);
     HAL_Delay(100);            // delay now limits rate of polling INA's
     

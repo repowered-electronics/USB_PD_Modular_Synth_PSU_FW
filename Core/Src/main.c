@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
 #include "i2c.h"
 #include "usart.h"
 #include "gpio.h"
@@ -25,6 +26,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "printf.h"
 #ifndef PRINTF
@@ -46,6 +48,13 @@
 #define HICCUP_TIME_MS    1000
 #define DEBUG_INTERVAL    1000
 #define EFF_5V_CONV       0.9
+#define UART_RX_BUF_SIZE  128
+
+enum debug_modes_enum {
+  DEBUG_NORMAL = 0,
+  DEBUG_DEVELOPER = 1,
+  DEBUG_QUIET     = 2
+};
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -60,7 +69,7 @@
 #define ENABLE_5P0_SUPPLY() HAL_GPIO_WritePin(DISABLE_5P0_GPIO_Port, DISABLE_5P0_Pin, 0)
 #define ENABLE_N12_SUPPLY() HAL_GPIO_WritePin(DISABLE_N12_GPIO_Port, DISABLE_N12_Pin, 0)
 #define DISABLE_N12_SUPPLY() HAL_GPIO_WritePin(DISABLE_N12_GPIO_Port, DISABLE_N12_Pin, 1)
-#define WITHIN_RANGE(x, target, range)  (x >= (target - range) && x <= (target + range))
+#define WITHIN_RANGE(x, target, range)  (x >= (target - range) && x < (target + range))
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -82,7 +91,8 @@ int Plim = 0;             // Power limit from find max pdo
 int Plim_guardband = 0;   // MARGIN FOR TRIPPING OVERDRAW IN mW
 int Hiccup_5v_flag = 0;       // Setting flag for 5v rail
 int Hiccup_n12v_flag = 0;     // Setting flag for n12v rail
-int Hiccup_p12v_flag =0;      // Setting flag for p12v rail
+int Hiccup_p12v_flag = 0;      // Setting flag for p12v rail
+int ina_alerts_enabled = 0;    // will be used to gate servicing of alert pin interrupts
 uint32_t hiccup_5v_ts = 0;
 uint32_t hiccup_p12v_ts = 0;
 uint32_t hiccup_n12v_ts = 0;
@@ -90,6 +100,15 @@ float ILIM_5V = 3.0;        // max rail current for 5V rail in Amperes
 float ILIM_N12V = 4.0;      // max rail current for -12V rail in Amperes
 float ILIM_12V = 8.0;      // max rail current for 12V *converter* in Amperes
 uint32_t debug_stamp = 0;
+
+int rx_size = 0;
+uint8_t rx_buf[UART_RX_BUF_SIZE];
+bool process_uart_buf = false;
+int debug_mode = DEBUG_NORMAL;
+uint8_t print_src_pdos_cmd[] = "PRINT_SRC_PDOS";
+float req_voltage = 5.0;
+float req_current = 1.5;
+int req_number = 0;
 
 uint8_t USB_PD_Interupt_Flag[USBPORT_MAX] ;
 uint8_t USB_PD_Interupt_PostponedFlag[USBPORT_MAX] ; 
@@ -128,6 +147,13 @@ void _putchar(char character);
 extern void nvm_flash(uint8_t Usb_Port);
 uint8_t u8x8_byte_hw_i2c(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr);
 uint8_t gpio_and_delay_callback(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void *arg_ptr);
+void disable_ina_ints();
+void enable_ina_ints();
+void restart_UART_rx();
+bool char_in_buffer(uint8_t* buffer, char c, int size);
+void strstrip(char* str, char* loc);
+void process_dev_packet();
+void check_on_pdo_voltage(int usb_port);
 
 /* USER CODE END PFP */
 
@@ -164,6 +190,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_I2C1_Init();
   MX_I2C2_Init();
   MX_USART1_UART_Init();
@@ -177,6 +204,7 @@ int main(void)
   ENABLE_PRIMARY_12V();
   DISABLE_OVRLD_LED();
   ENABLE_PDGOOD_LED();  
+  disable_ina_ints(); // start by not acting on interrupts from the INAs
   /* SETUP USB PD STUFF */
   
   hi2c[0] = &hi2c1;
@@ -195,14 +223,15 @@ int main(void)
 
   usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
 
-  HAL_Delay(1000); // allow STUSB4500 to initialize
+  Send_Soft_reset_Message(usb_port_id); // forces re-negotiation with newly updated PDO2
+  
+  HAL_Delay(500); // allow STUSB4500 to Initialize
 
   Print_PDO_FROM_SRC(usb_port_id);
 
   Plim = Find_Max_SRC_PDO(usb_port_id); // Returns negotiated power level in mW
 
   printf("the power limit is %dmW \r\n", Plim);
-  Send_Soft_reset_Message(usb_port_id); // forces re-negotiation with newly updated PDO2
 
   HAL_Delay(500); // give time for negotiation to occur and rail to stabilize
   
@@ -212,33 +241,7 @@ int main(void)
 
   // we can't move this elsewhere because we need to give time for the new
   // negotiated voltage to come up and stabilize.
-  float nego_voltage = (float ) PDO_FROM_SRC[usb_port_id][Nego_RDO[usb_port_id].b.Object_Pos - 1].fix.Voltage/20.0;
-  if (nego_voltage >= 12.0 && nego_voltage <= 16.0){
-    printf("Negotiated voltage is %.2fV - Pulsing main converter off.", nego_voltage);
-    DISABLE_PRIMARY_12V();
-    for(int i=0; i<25; i++)
-    {
-      __NOP();
-    }
-    ENABLE_PRIMARY_12V();
-  }
-
-  if(WITHIN_RANGE(nego_voltage, 5.0, 2.0))
-  {
-    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 1);
-  }
-  else if(WITHIN_RANGE(nego_voltage, 9.0, 2.0))
-  {
-    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 1);
-  }
-  else if (WITHIN_RANGE(nego_voltage, 15.0, 2.0))
-  {
-    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 1);
-  }
-  else if (WITHIN_RANGE(nego_voltage, 20.0, 2.0))
-  {
-    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 1);
-  }
+  check_on_pdo_voltage(usb_port_id);
 
   connection_flag[usb_port_id] = 1;
   Previous_VBUS_Current_limitation[usb_port_id] = VBUS_Current_limitation[usb_port_id];
@@ -274,39 +277,39 @@ int main(void)
   ina236_set_shunt_range(&ina_pos_12V, 0);
   ina236_set_shunt_range(&ina_5V, 0);
   ina236_set_shunt_range(&ina_neg_12V, 0);
-  HAL_Delay(250);
+  HAL_Delay(5);
 
   // Setting shunt cal register for each rail
   ina236_set_shuntcal(&ina_pos_12V);
   ina236_set_shuntcal(&ina_5V);
   ina236_set_shuntcal(&ina_neg_12V);
-  HAL_Delay(250);
+  HAL_Delay(5);
 
   // Setting current limits
   ina236_set_current_limit(&ina_5V, ILIM_5V);                                 // Setting constant current limit for 5V rail based on capability of converter
   ina236_set_current_limit(&ina_neg_12V, ILIM_N12V);                          // Setting constant current limit for n12V rail based on capability of converter
   ina236_set_current_limit(&ina_pos_12V, ILIM_12V);                           // Setting initial current limit for p12V rail assuming no draw from derivative rails
-  HAL_Delay(250);
+  HAL_Delay(5);
 
   // Enabling SOL Alert
   ina236_set_alertSOL(&ina_pos_12V);
   ina236_set_alertSOL(&ina_5V);
   ina236_set_alertSOL(&ina_neg_12V);
-  HAL_Delay(250);
+  HAL_Delay(5);
 
+  enable_ina_ints();
   /**** END SETUP INA236's ****/
 
   /**** BEGIN SETUP OLED *****/
-  u8g2_Setup_ssd1306_i2c_128x32_univision_f(&oled, U8G2_R3, u8x8_byte_hw_i2c, gpio_and_delay_callback);
+  u8g2_Setup_ssd1306_i2c_128x32_univision_f(&oled, U8G2_R2, u8x8_byte_hw_i2c, gpio_and_delay_callback);
   u8g2_InitDisplay(&oled); // send init sequence to the display, display is in sleep mode after this,
   u8g2_SetPowerSave(&oled, 0); // wake up display
   u8g2_ClearDisplay(&oled);
   u8g2_SetFont(&oled, u8g2_font_6x13_tf);
   u8g2_SetFontDirection(&oled, 1);
-  int pos_x = 4;
-  int pos_y = 4;
   /**** END SETUP OLED *****/
 
+  HAL_UART_Receive_DMA(&huart1, rx_buf, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -326,6 +329,7 @@ int main(void)
     float amps_p12v = ina236_get_current(&ina_pos_12V);
     float amps_5v = ina236_get_current(&ina_5V);
     float amps_n12v = ina236_get_current(&ina_neg_12V);
+
 
     float amps_5v_in = (volts_5v*amps_5v)/(EFF_5V_CONV*volts_p12v);
     float extra_draw_p12v = (amps_5v_in + amps_n12v);                           // Calculating draw on p12v rail NOT including the +12V output
@@ -397,9 +401,81 @@ int main(void)
       ENABLE_PDGOOD_LED();
     }
     u8g2_ClearBuffer(&oled);
-    u8g2_DrawStr(&oled, pos_x, pos_y, "MATT = SLUT");
+
+    char buffer[10];
+
+
+    //Line to Separate regulators
+    u8g2_DrawLine(&oled, 90, 0, 90, 32);
+
+    //Report +12V Stats
+    float p12VTopLine = 115.0;
+    u8g2_DrawStr(&oled, p12VTopLine, 0.0, "+12V");
+    sprintf(buffer, "%.1fV", volts_p12v);
+    u8g2_DrawStr(&oled, p12VTopLine-10.0, 0.0, buffer);
+    
+    if(amps_p12v > 0.1) {
+      sprintf(buffer, "%.2fA", amps_p12v);
+    }
+    else {
+      sprintf(buffer, "%.0fmA", 1000*amps_p12v);
+    }
+    u8g2_DrawStr(&oled, p12VTopLine-20.0, 0.0, buffer);
+    
+    //Report -12V Stats
+    float n12VTopLine = 75.0;
+    u8g2_DrawStr(&oled, n12VTopLine, 0.0, "-12V");
+    sprintf(buffer, "%.1fV", volts_n12v);
+    u8g2_DrawStr(&oled, n12VTopLine-10.0, 0.0, buffer);
+
+    if (amps_n12v > 0.1){
+      sprintf(buffer, "%.2fA", amps_n12v);
+    }
+    else {
+      sprintf(buffer, "%.0fmA", 1000*amps_n12v);
+
+    }
+    u8g2_DrawStr(&oled, n12VTopLine-20.0, 0.0, buffer);
+
+    //Line to Separate regulators
+    u8g2_DrawLine(&oled, 50, 0, 50, 32);
+
+    //Report +5V Stas
+    float p5VTopLine = 35.0;
+    u8g2_DrawStr(&oled, p5VTopLine, 0.0, "+5V");
+    sprintf(buffer, "%.2fV", volts_5v);
+    u8g2_DrawStr(&oled, p5VTopLine-10.0, 0.0, buffer);
+    if(amps_5v > 0.1) {
+      sprintf(buffer, "%.2fA", amps_5v);
+    }
+    else {
+      sprintf(buffer, "%.0fmA", 1000*amps_5v);
+    }
+    u8g2_DrawStr(&oled, p5VTopLine-20.0, 0.0, buffer);
+    
+    if (Hiccup_p12v_flag || Hiccup_5v_flag || Hiccup_n12v_flag){
+      u8g2_DrawStr(&oled, 0.0, 0.0, "OVLD!!");
+    }
+    else {
+      float nego_voltage = (float ) PDO_FROM_SRC[usb_port_id][Nego_RDO[usb_port_id].b.Object_Pos - 1].fix.Voltage/20.0;
+      sprintf(buffer, "%.1fV", nego_voltage);
+      u8g2_DrawStr(&oled, 0.0, 0.0, buffer);
+    }
+
     u8g2_SendBuffer(&oled);
-    HAL_Delay(100);            // delay now limits rate of polling INA's
+
+    // UART DEBUGGING THINGS
+    if(process_uart_buf){
+      process_uart_buf = false;
+      if (debug_mode == DEBUG_DEVELOPER){
+        process_dev_packet();
+      }else if(memcmp(rx_buf, "DEV", 3) == 0){
+        printf("ENTERING DEVELOPER MODE...\r\n");
+        debug_mode = DEBUG_DEVELOPER;
+      }
+      restart_UART_rx();
+    }
+    HAL_Delay(50);            // delay now limits rate of polling INA's
     
   }
   /* USER CODE END 3 */
@@ -448,17 +524,17 @@ void SystemClock_Config(void)
 
 // Hiccup control
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-  if(GPIO_Pin == ina_5V.int_pin){
+  if(GPIO_Pin == ina_5V.int_pin && ina_alerts_enabled){
     DISABLE_5PO_SUPPLY();
     Hiccup_5v_flag = 1;
     hiccup_5v_ts = HAL_GetTick();
     DISABLE_PDGOOD_LED();
     ENABLE_OVRLD_LED();
-  }else if(GPIO_Pin == ina_pos_12V.int_pin){
+  }else if(GPIO_Pin == ina_pos_12V.int_pin && ina_alerts_enabled){
     DISABLE_PRIMARY_12V();
     Hiccup_p12v_flag = 1;
     hiccup_p12v_ts = HAL_GetTick();
-  }else if(GPIO_Pin == ina_neg_12V.int_pin){
+  }else if(GPIO_Pin == ina_neg_12V.int_pin && ina_alerts_enabled){
     DISABLE_N12_SUPPLY();
     Hiccup_n12v_flag = 1;
     hiccup_n12v_ts = HAL_GetTick();
@@ -468,7 +544,168 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 }
 
 void _putchar(char character){
-  HAL_UART_Transmit(&huart1, &character, 1, 1);
+  if(debug_mode == DEBUG_NORMAL){
+    HAL_UART_Transmit(&huart1, &character, 1, 1);
+  }
+}
+
+/**
+ * Restarts DMA-based UART reception
+*/
+void restart_UART_rx(){
+  rx_size = 0;
+  HAL_UART_Receive_DMA(&huart1, rx_buf, 1);
+}
+
+/**
+ * Returns true if char c is in buffer
+*/
+bool char_in_buffer(uint8_t* buffer, char c, int size){
+  for(int i = 0; i < size; i++){
+    if (buffer[i] == c){
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * strip whitespace from str storing result in loc
+ * loc must have at least as much space as str
+*/
+void strstrip(char* str, char* loc){
+  int i = 0;
+  while(str[i] == ' ' || str[i] == '\n' || str[i] == '\r' || str[i] == '\t'){
+    i++;
+  }
+  strcpy(loc, str + i); // copy over everything except leading whitespace
+
+  i = strlen(loc) - 1; // get index of last character
+  while(i >= 0 && (loc[i] == ' ' || loc[i] == '\n' || loc[i] == '\r' || loc[i] == '\t')){
+    loc[i] = '\0'; // set this whitespace to null termination
+    i--;
+  }
+}
+
+/**
+ * Parses the string in rx_buf and does things based on that.
+*/
+void process_dev_packet(){
+  if(memcmp(rx_buf, "PRINT_SRC_PDOS", rx_size) == 0){
+    // printf the source PDOs
+    debug_mode = DEBUG_NORMAL;
+    Print_PDO_FROM_SRC(0); // usb port ID is always going to be 0 for our design
+    debug_mode = DEBUG_DEVELOPER;
+  }else{
+    if(char_in_buffer(rx_buf, '=', rx_size)){
+      // something is being set
+      uint8_t* word = (uint8_t*)malloc(rx_size);
+      char* token = strtok(rx_buf, "=");
+      while(token != NULL){
+        strstrip(token, word); // word now holds the CMD/KEY
+
+        token = strtok(NULL, "\0"); // get the VALUE
+
+        if (strcmp(word, "REQ_VOLTAGE") == 0){
+          strstrip(token, word);
+          req_voltage = atof(word);
+          req_number = 0;
+        }else if(strcmp(word, "REQ_CURRENT") == 0){
+          strstrip(token, word);
+          req_current = atof(word);
+          req_number = 0;
+        }else if(strcmp(word, "REQ_NUMBER") == 0){
+          strstrip(token, word);
+          req_number = atoi(word);
+        }
+      }
+      free(word);
+    }else if(memcmp(rx_buf, "NEGO_NEW_PDO", rx_size) == 0){
+      debug_mode = DEBUG_NORMAL;
+      if (req_number <= 0){
+        printf("Negotiating PDO of %.1fV @ %.2fA...", req_voltage, req_current);
+        int PDO_V = (int)(req_voltage*1000.0 + 0.5);
+        int PDO_I = (int)(req_current*1000.0 + 0.5);
+        Update_PDO(0, 2, PDO_V, PDO_I);
+        Update_Valid_PDO_Number(0, 2);
+      }else{
+        printf("Negotiating PDO #%d...", req_number);
+        Request_SRC_PDO_NUMBER(0, req_number);
+      }
+      Send_Soft_reset_Message(0); // forces re-negotiation
+      HAL_Delay(200);
+      connection_flag[0] = 1;
+      Read_RDO(0);
+      Print_RDO(0);
+      check_on_pdo_voltage(0);
+      debug_mode = DEBUG_DEVELOPER;
+    }
+  }
+}
+
+/**
+ * Checks what voltage has been negotiated and lights LEDs accordingly.
+ * Also pulses disable if voltage is around 15V.
+*/
+void check_on_pdo_voltage(int usb_port){
+  float nego_voltage = (float)PDO_FROM_SRC[usb_port][Nego_RDO[usb_port].b.Object_Pos - 1].fix.Voltage/20.0;
+  if (nego_voltage >= 12.0 && nego_voltage <= 16.0){
+    printf("Negotiated voltage is %.2fV - Pulsing main converter off.", nego_voltage);
+    DISABLE_PRIMARY_12V();
+    for(int i=0; i<25; i++)
+    {
+      __NOP();
+    }
+    ENABLE_PRIMARY_12V();
+  }
+
+  if(WITHIN_RANGE(nego_voltage, 5.0, 1.0))
+  {
+    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 1);
+    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 0);
+    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 0);
+    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 0);
+  }
+  else if(WITHIN_RANGE(nego_voltage, 9.0, 3.0))
+  {
+    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 0);
+    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 1);
+    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 0);
+    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 0);
+  }
+  else if (WITHIN_RANGE(nego_voltage, 15.0, 3.0))
+  {
+    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 0);
+    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 0);
+    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 1);
+    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 0);
+  }
+  else if (WITHIN_RANGE(nego_voltage, 20.0, 2.0))
+  {
+    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 0);
+    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 0);
+    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 0);
+    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 1);
+  }
+}
+
+/**
+ * Callback for UART DMA reception
+*/
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
+  if (rx_buf[rx_size] == '\n'){
+    rx_buf[rx_size] = '\0'; // null terminate the received string
+    process_uart_buf = true; // process buffer
+    // up to main loop to restart UART reception
+  }else{
+    rx_size++;
+    if(rx_size >= UART_RX_BUF_SIZE){
+      // stupid user what have you done
+      rx_size = 0;
+    }
+    HAL_UART_Receive_DMA(&huart1, rx_buf + rx_size, 1);
+  }
+  
 }
 
 /**
@@ -596,6 +833,15 @@ uint8_t gpio_and_delay_callback(u8x8_t *u8x8, uint8_t msg, uint8_t arg_int, void
   }
   return 1;
 }
+
+void disable_ina_ints(){
+  ina_alerts_enabled = 0;
+}
+
+void enable_ina_ints(){
+  ina_alerts_enabled = 1;
+}
+
 
 /* USER CODE END 4 */
 

@@ -600,9 +600,9 @@ int Find_Max_SRC_PDO(uint8_t Usb_Port)
 
     Update_PDO(Usb_Port, 2, PDO_V, PDO_I);
     Update_Valid_PDO_Number(Usb_Port, 2);
-        
+
     printf("pmax is %i \r\n", Pmax);
-    printf("vmax is %i \r\n", Vmax);
+    printf("vmax is %iV. V_chosen is %i \r\n", Vmax, PDO_V);
    }
    return Pmax;
 }

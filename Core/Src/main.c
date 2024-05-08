@@ -18,8 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "dma.h"
 #include "i2c.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -49,6 +51,7 @@
 #define DEBUG_INTERVAL    1000
 #define EFF_5V_CONV       0.9
 #define UART_RX_BUF_SIZE  128
+#define ENABLE_12V_TIMEOUT_US 250000
 
 enum debug_modes_enum {
   DEBUG_NORMAL = 0,
@@ -78,6 +81,9 @@ enum debug_modes_enum {
 volatile INA236_t ina_5V;
 volatile INA236_t ina_pos_12V;
 volatile INA236_t ina_neg_12V;
+float volts_p12v = 12.0;
+float volts_5v = 5.0;
+volatile float volts_n12v = 0.0;
 
 I2C_HandleTypeDef *hi2c[I2CBUS_MAX];
 unsigned int Address;
@@ -137,6 +143,15 @@ display_t display = {
   .oled = &oled
 }; // struct to contain more stuff about the display
 
+/* ADC things */
+volatile float vbus_meas = 0.0;
+uint32_t adc_samples[2];
+volatile int adc_sample_count = 0;
+uint32_t adc_sample_sums[2];
+volatile bool adc_conv_cplt = false;
+volatile uint32_t micros_count = 0;
+volatile uint32_t micros_count_by_32 = 0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -154,6 +169,8 @@ bool char_in_buffer(uint8_t* buffer, char c, int size);
 void strstrip(char* str, char* loc);
 void process_dev_packet();
 void check_on_pdo_voltage(int usb_port);
+void delay_us(uint32_t delay);
+uint32_t micros();
 
 /* USER CODE END PFP */
 
@@ -168,6 +185,7 @@ void check_on_pdo_voltage(int usb_port);
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
   int usb_port_id = 0;
   /* USER CODE END 1 */
@@ -194,14 +212,19 @@ int main(void)
   MX_I2C1_Init();
   MX_I2C2_Init();
   MX_USART1_UART_Init();
+  MX_ADC1_Init();
+  MX_TIM3_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
-  /* ENSURE EXTERNAL SUPPLIES START IN OFF STATE */
-  // Send_Soft_reset_Message(usb_port_id);
-  // SW_reset_by_Reg(usb_port_id);
-  // HAL_Delay(1000);
+  /* Start microsecond timer */
+  HAL_TIM_Base_Start_IT(&htim1);
 
-  ENABLE_PRIMARY_12V();
+  /* ENSURE EXTERNAL SUPPLIES START IN OFF STATE */
+  DISABLE_PRIMARY_12V();
+  DISABLE_5PO_SUPPLY();
+  DISABLE_N12_SUPPLY();
+
   DISABLE_OVRLD_LED();
   ENABLE_PDGOOD_LED();  
   disable_ina_ints(); // start by not acting on interrupts from the INAs
@@ -233,7 +256,7 @@ int main(void)
 
   printf("the power limit is %dmW \r\n", Plim);
 
-  HAL_Delay(500); // give time for negotiation to occur and rail to stabilize
+  HAL_Delay(750); // give time for negotiation to occur and rail to stabilize
   
   Read_RDO(usb_port_id);
   
@@ -243,11 +266,23 @@ int main(void)
   // negotiated voltage to come up and stabilize.
   check_on_pdo_voltage(usb_port_id);
 
+  // sequence the turn on of the rails
+  ENABLE_PRIMARY_12V();
+  int timeout = 0;
+  GPIO_PinState pgood = HAL_GPIO_ReadPin(PGOOD_12V_GPIO_Port, PGOOD_12V_Pin);
+  while (pgood == GPIO_PIN_RESET && timeout < ENABLE_12V_TIMEOUT_US) {
+    delay_us(10);
+    timeout += 10;
+    pgood = HAL_GPIO_ReadPin(PGOOD_12V_GPIO_Port, PGOOD_12V_Pin);
+  }
+  ENABLE_N12_SUPPLY();
+  ENABLE_5P0_SUPPLY();
+
   connection_flag[usb_port_id] = 1;
   Previous_VBUS_Current_limitation[usb_port_id] = VBUS_Current_limitation[usb_port_id];
 
   /**** BEGIN SETUP INA236's ****/
- 
+  
   ina_5V.hi2c = &hi2c1;
 
   ina236_general_call_reset(&ina_5V); // will reset all INA236's on the bus
@@ -310,6 +345,12 @@ int main(void)
   /**** END SETUP OLED *****/
 
   HAL_UART_Receive_DMA(&huart1, rx_buf, 1);
+
+  HAL_ADC_Stop(&hadc1); // ensure ADC is STOPPED
+  HAL_ADCEx_Calibration_Start(&hadc1);
+  HAL_Delay(25);
+
+  HAL_TIM_Base_Start_IT(&htim3); // start timer for actually triggering ADC conversions (2.5kHz)
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -321,9 +362,8 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
     // Reading bus Voltage from INA236
-    float volts_p12v = ina236_get_voltage(&ina_pos_12V);
-    float volts_5v = ina236_get_voltage(&ina_5V);
-    float volts_n12v = ina236_get_voltage(&ina_neg_12V);
+    volts_p12v  = ina236_get_voltage(&ina_pos_12V);
+    volts_5v    = ina236_get_voltage(&ina_5V);
 
     // Reading current from INA236
     float amps_p12v = ina236_get_current(&ina_pos_12V);
@@ -348,11 +388,12 @@ int main(void)
     
     if (HAL_GetTick() - debug_stamp > DEBUG_INTERVAL){
       debug_stamp = HAL_GetTick();
-      printf("5V Bus: %.2fV, %.2fA, %.2fmW \r\n", volts_5v, amps_5v, power_5V);
-      printf("+12V Bus: %.2fV, %.2fA, %.2fmW \r\n", volts_p12v, amps_p12v, power_p12V);
-      printf("-12V Bus: -%.2fV, %.2fA, %.2fmW \r\n\r\n", volts_n12v, amps_n12v, power_n12V);
-      printf("Total Current from +12V Rail: %.2fA \r\n\r\n", draw_p12v);
-      printf("The Updated +12V Current Limit is %.2fA \r\n\r\n", ILIM_12V_dyn);
+      printf("VBUS    : %.3fV \r\n", vbus_meas);
+      printf("5V Bus  : %.3fV, %.4fA, %.4fmW \r\n", volts_5v, amps_5v, power_5V);
+      printf("+12V Bus: %.3fV, %.4fA, %.4fmW \r\n", volts_p12v, amps_p12v, power_p12V);
+      printf("-12V Bus: %.3fV, %.4fA, %.4fmW \r\n\r\n", volts_n12v, amps_n12v, power_n12V);
+      printf("Total Current from +12V Rail: %.4fA \r\n\r\n", draw_p12v);
+      printf("The Updated +12V Current Limit is %.4fA \r\n\r\n", ILIM_12V_dyn);
     }else if (HAL_GetTick() < debug_stamp){
       // tick counter has wrapped around
       debug_stamp = 0;
@@ -489,6 +530,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -499,7 +541,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL6;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -514,13 +556,36 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
+  if (htim->Instance == TIM3){
+    adc_sample_sums[0] += adc_samples[0];
+    adc_sample_sums[1] += adc_samples[1];
+    adc_sample_count++;
+    if (adc_sample_count >= 10){
+      volts_n12v = (-5.0*3.3*(adc_sample_sums[0]/adc_sample_count))/4095.0;
+      vbus_meas  = (7.9118*3.3*(adc_sample_sums[1]/adc_sample_count))/4095.0;
+      adc_sample_sums[0] = 0;
+      adc_sample_sums[1] = 0;
+      adc_sample_count = 0;
+    }
+    HAL_ADC_Start_DMA(&hadc1, adc_samples, 2); //Trigger ADC DMA
+  }else if(htim->Instance == TIM1){
+    micros_count_by_32++;
+  }
+}
 
 // Hiccup control
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
@@ -687,6 +752,37 @@ void check_on_pdo_voltage(int usb_port){
     HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 0);
     HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 1);
   }
+}
+
+
+/**
+ * Delay some number of microseconds
+*/
+void delay_us(uint32_t delay){
+  uint32_t start_us = micros();
+  uint32_t tstamp = start_us;
+  while (tstamp - start_us < delay){
+    tstamp = micros();
+    if (tstamp < start_us){
+      uint32_t elapsed = 0xFFFFFFFF - start_us; // how many us passed before wrap around
+      start_us = 0;
+      delay -= elapsed;
+    }
+  }
+}
+
+/**
+ * Get a count of microseconds since program start. Will wrap around after some time.
+*/
+uint32_t micros(){
+  uint32_t subdiv = (htim1.Instance->CNT << 5) / htim1.Instance->CNT;
+  uint32_t new_micros = (micros_count_by_32 << 5) + subdiv;
+  if (new_micros < micros_count){
+    // micros_count_by_32 << 5 has wrapped around
+    micros_count_by_32 = micros_count_by_32 - 0x07FFFFFF;
+    new_micros = (micros_count_by_32 << 5) + subdiv;
+  }
+  return new_micros;
 }
 
 /**

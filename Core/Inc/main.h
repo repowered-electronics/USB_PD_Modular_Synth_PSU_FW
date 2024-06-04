@@ -57,8 +57,6 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define ATTACH_Pin GPIO_PIN_1
-#define ATTACH_GPIO_Port GPIOA
 #define USB_GPIO_Pin GPIO_PIN_2
 #define USB_GPIO_GPIO_Port GPIOA
 #define PDGOOD_Pin GPIO_PIN_3
@@ -75,6 +73,8 @@ void Error_Handler(void);
 #define DISABLE_N12_GPIO_Port GPIOB
 #define DISABLE_5P0_Pin GPIO_PIN_1
 #define DISABLE_5P0_GPIO_Port GPIOB
+#define ATTACH_Pin GPIO_PIN_2
+#define ATTACH_GPIO_Port GPIOB
 #define USBPD_ALERT_Pin GPIO_PIN_12
 #define USBPD_ALERT_GPIO_Port GPIOB
 #define USBPD_ALERT_EXTI_IRQn EXTI15_10_IRQn
@@ -97,6 +97,8 @@ void Error_Handler(void);
 #define PDBAD_GPIO_Port GPIOA
 #define USBPD_RST_Pin GPIO_PIN_3
 #define USBPD_RST_GPIO_Port GPIOB
+#define PWR_BTN_Pin GPIO_PIN_5
+#define PWR_BTN_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

@@ -18,8 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "adc.h"
 #include "dma.h"
 #include "i2c.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -45,10 +47,23 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define HICCUP_TIME_MS    1000
-#define DEBUG_INTERVAL    1000
-#define EFF_5V_CONV       0.9
-#define UART_RX_BUF_SIZE  128
+#define HICCUP_TIME_MS          1000
+#define DEBUG_INTERVAL          1000
+#define EFF_5V_CONV             0.9
+#define UART_RX_BUF_SIZE        128
+#define ENABLE_12V_TIMEOUT_US   250000
+#define INIT_STARTUP_DLY_MS     25
+#define STUSB_INIT_DLY_MS       100
+#define DUMB_CHG_IQ_MA          140   // current drawn from VBUS when it is ~5V
+#define DUMB_CHG_CURR_LIM_MA    (1000 - DUMB_CHG_IQ_MA)  // max allowed to be drawn from VBUS when it's ~5V (used for Plim calc)
+#define OVERLD_LED_WARN_OFF_MS  750
+#define OVERLD_LED_WARN_ON_MS   250
+
+#define CHG_TYPE_DUMB         0
+#define CHG_TYPE_PD           1
+
+#define OUTPUT_OFF            0
+#define OUTPUT_ON             1
 
 enum debug_modes_enum {
   DEBUG_NORMAL = 0,
@@ -61,10 +76,12 @@ enum debug_modes_enum {
 /* USER CODE BEGIN PM */
 #define ENABLE_PRIMARY_12V() HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 0)
 #define DISABLE_PRIMARY_12V() HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 1)
+#define PRI_12V_STATE() (((DISABLE_PRI_12V_GPIO_Port->ODR >> DISABLE_PRI_12V_Pin) & 1) ^ 1)
 #define ENABLE_PDGOOD_LED() HAL_GPIO_WritePin(PDGOOD_GPIO_Port, PDGOOD_Pin, 1)
 #define DISABLE_PDGOOD_LED() HAL_GPIO_WritePin(PDGOOD_GPIO_Port, PDGOOD_Pin, 0)
 #define ENABLE_OVRLD_LED() HAL_GPIO_WritePin(PDBAD_GPIO_Port, PDBAD_Pin, 1)
 #define DISABLE_OVRLD_LED() HAL_GPIO_WritePin(PDBAD_GPIO_Port, PDBAD_Pin, 0)
+#define OVRLD_LED_STATE() ((PDBAD_GPIO_Port->ODR >> PDBAD_Pin) & 1)
 #define DISABLE_5PO_SUPPLY() HAL_GPIO_WritePin(DISABLE_5P0_GPIO_Port, DISABLE_5P0_Pin, 1)
 #define ENABLE_5P0_SUPPLY() HAL_GPIO_WritePin(DISABLE_5P0_GPIO_Port, DISABLE_5P0_Pin, 0)
 #define ENABLE_N12_SUPPLY() HAL_GPIO_WritePin(DISABLE_N12_GPIO_Port, DISABLE_N12_Pin, 0)
@@ -78,6 +95,9 @@ enum debug_modes_enum {
 volatile INA236_t ina_5V;
 volatile INA236_t ina_pos_12V;
 volatile INA236_t ina_neg_12V;
+float volts_p12v = 12.0;
+float volts_5v = 5.0;
+volatile float volts_n12v = 0.0;
 
 I2C_HandleTypeDef *hi2c[I2CBUS_MAX];
 unsigned int Address;
@@ -89,6 +109,8 @@ int PB_press=0;
 int Time_elapse=1;
 int Plim = 0;             // Power limit from find max pdo
 int Plim_guardband = 0;   // MARGIN FOR TRIPPING OVERDRAW IN mW
+int Plim_warn = 150; // Margin for triggering warning of impending overdraw
+uint32_t overld_led_ts = 0;
 int Hiccup_5v_flag = 0;       // Setting flag for 5v rail
 int Hiccup_n12v_flag = 0;     // Setting flag for n12v rail
 int Hiccup_p12v_flag = 0;      // Setting flag for p12v rail
@@ -98,7 +120,7 @@ uint32_t hiccup_p12v_ts = 0;
 uint32_t hiccup_n12v_ts = 0;
 float ILIM_5V = 3.0;        // max rail current for 5V rail in Amperes
 float ILIM_N12V = 4.0;      // max rail current for -12V rail in Amperes
-float ILIM_12V = 8.0;      // max rail current for 12V *converter* in Amperes
+float ILIM_12V = 8.0;       // max rail current for 12V *converter* in Amperes
 uint32_t debug_stamp = 0;
 
 int rx_size = 0;
@@ -137,6 +159,16 @@ display_t display = {
   .oled = &oled
 }; // struct to contain more stuff about the display
 
+/* ADC things */
+volatile float vbus_meas = 0.0;
+uint32_t adc_samples[2];
+volatile int adc_sample_count = 0;
+uint32_t adc_sample_sums[2];
+volatile bool adc_conv_cplt = false;
+volatile uint32_t micros_count = 0;
+volatile uint32_t micros_count_by_32 = 0;
+volatile uint8_t chg_type   = CHG_TYPE_DUMB;
+volatile uint8_t output_state = OUTPUT_OFF;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -154,6 +186,10 @@ bool char_in_buffer(uint8_t* buffer, char c, int size);
 void strstrip(char* str, char* loc);
 void process_dev_packet();
 void check_on_pdo_voltage(int usb_port);
+void update_vbus_leds(float vbus);
+void delay_us(uint32_t delay);
+void set_output_state(uint8_t on_or_off);
+uint32_t micros();
 
 /* USER CODE END PFP */
 
@@ -168,6 +204,7 @@ void check_on_pdo_voltage(int usb_port);
   */
 int main(void)
 {
+
   /* USER CODE BEGIN 1 */
   int usb_port_id = 0;
   /* USER CODE END 1 */
@@ -194,19 +231,25 @@ int main(void)
   MX_I2C1_Init();
   MX_I2C2_Init();
   MX_USART1_UART_Init();
+  MX_ADC1_Init();
+  MX_TIM3_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
-  /* ENSURE EXTERNAL SUPPLIES START IN OFF STATE */
-  // Send_Soft_reset_Message(usb_port_id);
-  // SW_reset_by_Reg(usb_port_id);
-  // HAL_Delay(1000);
+  /* Start microsecond timer */
+  HAL_TIM_Base_Start_IT(&htim1);
 
-  ENABLE_PRIMARY_12V();
+  /* ENSURE EXTERNAL SUPPLIES START IN OFF STATE */
+  output_state = OUTPUT_OFF;
+  set_output_state(output_state);
+
   DISABLE_OVRLD_LED();
   ENABLE_PDGOOD_LED();  
   disable_ina_ints(); // start by not acting on interrupts from the INAs
+
+  HAL_Delay(INIT_STARTUP_DLY_MS);
+
   /* SETUP USB PD STUFF */
-  
   hi2c[0] = &hi2c1;
   STUSB45DeviceConf[usb_port_id].I2cBus = usb_port_id;
   STUSB45DeviceConf[usb_port_id].I2cDeviceID_7bit = 0x28;
@@ -223,31 +266,39 @@ int main(void)
 
   usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
 
-  Send_Soft_reset_Message(usb_port_id); // forces re-negotiation with newly updated PDO2
-  
-  HAL_Delay(500); // allow STUSB4500 to Initialize
+  /* ASSESS: USB-PD CHARGER OR DUMB-CHARGER */
+  if(!HAL_GPIO_ReadPin(ATTACH_GPIO_Port, ATTACH_Pin)){
+    // a CC line is attached, negotiate PD
+    chg_type = CHG_TYPE_PD;
+    Send_Soft_reset_Message(usb_port_id); //
+    
+    HAL_Delay(STUSB_INIT_DLY_MS); // allow STUSB4500 to Initialize
 
-  Print_PDO_FROM_SRC(usb_port_id);
+    Print_PDO_FROM_SRC(usb_port_id);
 
-  Plim = Find_Max_SRC_PDO(usb_port_id); // Returns negotiated power level in mW
+    Plim = Find_Max_SRC_PDO(usb_port_id); // Returns negotiated power level in mW
 
-  printf("the power limit is %dmW \r\n", Plim);
+    printf("the power limit is %dmW \r\n", Plim);
 
-  HAL_Delay(500); // give time for negotiation to occur and rail to stabilize
-  
-  Read_RDO(usb_port_id);
-  
-  Print_RDO(usb_port_id);
+    HAL_Delay(750); // give time for negotiation to occur and rail to stabilize
+    
+    Read_RDO(usb_port_id);
+    
+    Print_RDO(usb_port_id);
 
-  // we can't move this elsewhere because we need to give time for the new
-  // negotiated voltage to come up and stabilize.
-  check_on_pdo_voltage(usb_port_id);
-
-  connection_flag[usb_port_id] = 1;
-  Previous_VBUS_Current_limitation[usb_port_id] = VBUS_Current_limitation[usb_port_id];
+    // we can't move this elsewhere because we need to give time for the new
+    // negotiated voltage to come up and stabilize.
+    check_on_pdo_voltage(usb_port_id);
+    
+    connection_flag[usb_port_id] = 1;
+    Previous_VBUS_Current_limitation[usb_port_id] = VBUS_Current_limitation[usb_port_id];
+  }else{
+    // Dumb charger
+    chg_type = CHG_TYPE_DUMB;
+    Plim = 5 * DUMB_CHG_CURR_LIM_MA;
+  }
 
   /**** BEGIN SETUP INA236's ****/
- 
   ina_5V.hi2c = &hi2c1;
 
   ina236_general_call_reset(&ina_5V); // will reset all INA236's on the bus
@@ -310,6 +361,12 @@ int main(void)
   /**** END SETUP OLED *****/
 
   HAL_UART_Receive_DMA(&huart1, rx_buf, 1);
+
+  HAL_ADC_Stop(&hadc1); // ensure ADC is STOPPED
+  HAL_ADCEx_Calibration_Start(&hadc1);
+  HAL_Delay(25);
+
+  HAL_TIM_Base_Start_IT(&htim3); // start timer for actually triggering ADC conversions (2.5kHz)
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -321,9 +378,8 @@ int main(void)
     /* USER CODE BEGIN 3 */
 
     // Reading bus Voltage from INA236
-    float volts_p12v = ina236_get_voltage(&ina_pos_12V);
-    float volts_5v = ina236_get_voltage(&ina_5V);
-    float volts_n12v = ina236_get_voltage(&ina_neg_12V);
+    volts_p12v  = ina236_get_voltage(&ina_pos_12V);
+    volts_5v    = ina236_get_voltage(&ina_5V);
 
     // Reading current from INA236
     float amps_p12v = ina236_get_current(&ina_pos_12V);
@@ -337,7 +393,7 @@ int main(void)
     float ILIM_12V_dyn = (ILIM_12V - extra_draw_p12v);                          // Updating p12v current limit based on 5v and n12v rail draw
     
     ina236_set_current_limit(&ina_pos_12V, ILIM_12V_dyn);                       // Setting INA236 current limit with dynamic limit based on derivative rail draw
-    HAL_Delay(100);                                                             // This delay is probably unnecessary, but adding it during ILIM debug to slow down the dynamic current limit update
+    HAL_Delay(50);                                                              // This delay is probably unnecessary, but adding it during ILIM debug to slow down the dynamic current limit update
 
     // Reading power from INA236
     float power_p12V = 1000.0*ina236_get_power(&ina_pos_12V);                   // Returns +12V bus power in mW
@@ -348,11 +404,12 @@ int main(void)
     
     if (HAL_GetTick() - debug_stamp > DEBUG_INTERVAL){
       debug_stamp = HAL_GetTick();
-      printf("5V Bus: %.2fV, %.2fA, %.2fmW \r\n", volts_5v, amps_5v, power_5V);
-      printf("+12V Bus: %.2fV, %.2fA, %.2fmW \r\n", volts_p12v, amps_p12v, power_p12V);
-      printf("-12V Bus: -%.2fV, %.2fA, %.2fmW \r\n\r\n", volts_n12v, amps_n12v, power_n12V);
-      printf("Total Current from +12V Rail: %.2fA \r\n\r\n", draw_p12v);
-      printf("The Updated +12V Current Limit is %.2fA \r\n\r\n", ILIM_12V_dyn);
+      printf("VBUS    : %.3fV \r\n", vbus_meas);
+      printf("5V Bus  : %.3fV, %.4fA, %.4fmW \r\n", volts_5v, amps_5v, power_5V);
+      printf("+12V Bus: %.3fV, %.4fA, %.4fmW \r\n", volts_p12v, amps_p12v, power_p12V);
+      printf("-12V Bus: %.3fV, %.4fA, %.4fmW \r\n\r\n", volts_n12v, amps_n12v, power_n12V);
+      printf("Total Current from +12V Rail: %.4fA \r\n\r\n", draw_p12v);
+      printf("The Updated +12V Current Limit is %.4fA \r\n\r\n", ILIM_12V_dyn);
     }else if (HAL_GetTick() < debug_stamp){
       // tick counter has wrapped around
       debug_stamp = 0;
@@ -384,18 +441,32 @@ int main(void)
       ENABLE_PDGOOD_LED();
     }
 
+    
     // Conditional Statement for Lighting overload LED based on total power draw
-    if(tot_power >= (Plim - Plim_guardband))
+    if(!Hiccup_p12v_flag && tot_power >= (Plim + Plim_guardband))
     {
       DISABLE_PDGOOD_LED();
       ENABLE_OVRLD_LED();
       DISABLE_PRIMARY_12V();
       Hiccup_p12v_flag = 1;             // If total system power exceeds limit - guardband, hiccup entire system (primary)
       hiccup_p12v_ts = HAL_GetTick();
-      printf("Total power is exceeded");
+      printf("Total power draw (%.2f W) exceeded limit (%.2f W)", tot_power/1000.0, Plim/1000.0);
     }
-    
-    else if (tot_power < (Plim - Plim_guardband))
+    else if (PRI_12V_STATE() && tot_power >= (Plim - Plim_warn))
+    {
+      /* Primary 12V is still on and total power is getting close to overload. */
+      /* Flash PDBAD (OVERLOAD) LED */
+      if (OVRLD_LED_STATE() == 0 && HAL_GetTick() - overld_led_ts > OVERLD_LED_WARN_OFF_MS){
+        // LED is currently OFF, and it's been off long enough
+        ENABLE_OVRLD_LED();
+        overld_led_ts = HAL_GetTick();
+      }else if(OVRLD_LED_STATE() == 1 && HAL_GetTick() - overld_led_ts > OVERLD_LED_WARN_ON_MS){
+        // LED is ON now, and it's been on long enough
+        DISABLE_OVRLD_LED();
+        overld_led_ts = HAL_GetTick();
+      }
+    }
+    else
     {
       DISABLE_OVRLD_LED();
       ENABLE_PDGOOD_LED();
@@ -489,6 +560,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -499,7 +571,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL6;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -514,13 +586,36 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
+  if (htim->Instance == TIM3){
+    adc_sample_sums[0] += adc_samples[0];
+    adc_sample_sums[1] += adc_samples[1];
+    adc_sample_count++;
+    if (adc_sample_count >= 10){
+      volts_n12v = (-5.0*3.3*(adc_sample_sums[0]/adc_sample_count))/4095.0;
+      vbus_meas  = (7.9118*3.3*(adc_sample_sums[1]/adc_sample_count))/4095.0;
+      adc_sample_sums[0] = 0;
+      adc_sample_sums[1] = 0;
+      adc_sample_count = 0;
+    }
+    HAL_ADC_Start_DMA(&hadc1, adc_samples, 2); //Trigger ADC DMA
+  }else if(htim->Instance == TIM1){
+    micros_count_by_32++;
+  }
+}
 
 // Hiccup control
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
@@ -658,35 +753,92 @@ void check_on_pdo_voltage(int usb_port){
     }
     ENABLE_PRIMARY_12V();
   }
+  update_vbus_leds(nego_voltage);
+}
 
-  if(WITHIN_RANGE(nego_voltage, 5.0, 1.0))
+
+/**
+ * Light the correct VBUS indicator LED depending on the vbus argument
+*/
+void update_vbus_leds(float vbus){
+
+  HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 0);
+  HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 0);
+  HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 0);
+  HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 0);
+
+  if(WITHIN_RANGE(vbus, 5.0, 1.0))
   {
     HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 1);
-    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 0);
-    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 0);
-    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 0);
   }
-  else if(WITHIN_RANGE(nego_voltage, 9.0, 3.0))
+  else if(WITHIN_RANGE(vbus, 9.0, 3.0))
   {
-    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 0);
     HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 1);
-    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 0);
-    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 0);
   }
-  else if (WITHIN_RANGE(nego_voltage, 15.0, 3.0))
+  else if (WITHIN_RANGE(vbus, 15.0, 3.0))
   {
-    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 0);
-    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 0);
     HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 1);
-    HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 0);
   }
-  else if (WITHIN_RANGE(nego_voltage, 20.0, 2.0))
+  else if (WITHIN_RANGE(vbus, 20.0, 2.0))
   {
-    HAL_GPIO_WritePin(PD5V_GPIO_Port, PD5V_Pin, 0);
-    HAL_GPIO_WritePin(PD9V_GPIO_Port, PD9V_Pin, 0);
-    HAL_GPIO_WritePin(PD15V_GPIO_Port, PD15V_Pin, 0);
     HAL_GPIO_WritePin(PD20V_GPIO_Port, PD20V_Pin, 1);
   }
+}
+
+
+/**
+ * Delay some number of microseconds
+*/
+void delay_us(uint32_t delay){
+  uint32_t start_us = micros();
+  uint32_t tstamp = start_us;
+  while (tstamp - start_us < delay){
+    tstamp = micros();
+    if (tstamp < start_us){
+      uint32_t elapsed = 0xFFFFFFFF - start_us; // how many us passed before wrap around
+      start_us = 0;
+      delay -= elapsed;
+    }
+  }
+}
+
+
+/**
+ * If on_or_off != 0, turn on the outputs in sequence.
+ * else, turn off all 3 outputs at once
+*/
+void set_output_state(uint8_t on_or_off){
+  if(on_or_off){
+    // sequence the turn on of the rails
+    ENABLE_PRIMARY_12V();
+    int timeout = 0;
+    GPIO_PinState pgood = HAL_GPIO_ReadPin(PGOOD_12V_GPIO_Port, PGOOD_12V_Pin);
+    while (pgood == GPIO_PIN_RESET && timeout < ENABLE_12V_TIMEOUT_US) {
+      delay_us(10);
+      timeout += 10;
+      pgood = HAL_GPIO_ReadPin(PGOOD_12V_GPIO_Port, PGOOD_12V_Pin);
+    }
+    ENABLE_N12_SUPPLY();
+    ENABLE_5P0_SUPPLY();
+  }else{
+    DISABLE_N12_SUPPLY();
+    DISABLE_5PO_SUPPLY();
+    DISABLE_PRIMARY_12V();
+  }
+}
+
+/**
+ * Get a count of microseconds since program start. Will wrap around after some time.
+*/
+uint32_t micros(){
+  uint32_t subdiv = (htim1.Instance->CNT << 5) / htim1.Instance->CNT;
+  uint32_t new_micros = (micros_count_by_32 << 5) + subdiv;
+  if (new_micros < micros_count){
+    // micros_count_by_32 << 5 has wrapped around
+    micros_count_by_32 = micros_count_by_32 - 0x07FFFFFF;
+    new_micros = (micros_count_by_32 << 5) + subdiv;
+  }
+  return new_micros;
 }
 
 /**

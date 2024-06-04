@@ -27,7 +27,6 @@
 # Misc
 *.map
 *.m
-*.png
 
 .vscode/
 .cproject

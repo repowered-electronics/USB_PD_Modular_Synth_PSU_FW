@@ -54,10 +54,10 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define HICCUP_TIME_MS          1000
-#define DEBUG_INTERVAL          1000
+#define DEBUG_INTERVAL          10000
 #define EFF_5V_CONV             0.9
 #define UART_RX_BUF_SIZE        128
-#define ENABLE_12V_TIMEOUT_US   250000
+#define ENABLE_12V_TIMEOUT_US   1000000
 #define INIT_STARTUP_DLY_MS     25
 #define STUSB_INIT_DLY_MS       100
 #define DUMB_CHG_IQ_MA          140   // current drawn from VBUS when it is ~5V
@@ -272,6 +272,8 @@ int main(void)
 
   usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
 
+  HAL_Delay(25); /* delay needed for correct assertion of ATTACH (maybe...) */
+
   /* ASSESS: USB-PD CHARGER OR DUMB-CHARGER */
   if(!HAL_GPIO_ReadPin(ATTACH_GPIO_Port, ATTACH_Pin)){
     // a CC line is attached, negotiate PD
@@ -294,14 +296,17 @@ int main(void)
 
     // we can't move this elsewhere because we need to give time for the new
     // negotiated voltage to come up and stabilize.
-    check_on_pdo_voltage(usb_port_id);
+    float nego_voltage = (float)PDO_FROM_SRC[usb_port_id][Nego_RDO[usb_port_id].b.Object_Pos - 1].fix.Voltage/20.0;
+    update_vbus_leds(nego_voltage);
     
     connection_flag[usb_port_id] = 1;
     Previous_VBUS_Current_limitation[usb_port_id] = VBUS_Current_limitation[usb_port_id];
   }else{
     // Dumb charger
+    printf("Dumb charger detected...\r\n");
     chg_type = CHG_TYPE_DUMB;
     Plim = 5 * DUMB_CHG_CURR_LIM_MA;
+    update_vbus_leds(5.0);
   }
 
   /**** BEGIN SETUP INA236's ****/
@@ -373,6 +378,9 @@ int main(void)
   HAL_Delay(25);
 
   HAL_TIM_Base_Start_IT(&htim3); // start timer for actually triggering ADC conversions (2.5kHz)
+
+  set_output_state(OUTPUT_ON); /* enable output */
+
   /* USER CODE END 2 */
 
   /* Infinite loop */

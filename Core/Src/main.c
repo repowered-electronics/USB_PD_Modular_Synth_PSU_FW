@@ -272,7 +272,7 @@ int main(void)
 
   usb_pd_init(usb_port_id);   // after this USBPD alert line must be high 
 
-  HAL_Delay(25); /* delay needed for correct assertion of ATTACH (maybe...) */
+  HAL_Delay(250); /* delay needed for correct assertion of ATTACH (maybe...) */
 
   /* ASSESS: USB-PD CHARGER OR DUMB-CHARGER */
   if(!HAL_GPIO_ReadPin(ATTACH_GPIO_Port, ATTACH_Pin)){

@@ -12,7 +12,7 @@ Microelectronics and much of the configuration code was generated using ST's
 The license(s) for all that is as-included with those source files.
 
 Our hardware also relies on the 
-[STUSB4700](https://www.st.com/en/interfaces-and-transceivers/stusb4700.html) 
+[STUSB4500](https://www.st.com/en/interfaces-and-transceivers/stusb4500.html) 
 for handling the USB PD (Power Delivery) negotiation. The microcontroller talks 
 to this chip and configures things with it so it can ensure we're negotiating 
 the right stuff, and figures out sensible overdraw limits. 

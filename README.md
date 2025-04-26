@@ -1,7 +1,12 @@
+# v1.0.0
 # ReMMI USB PD 100W Modular Synth PSU Firmware
+
 This is the firmware source repo for the 
-[Repowered Electronics](https://www.repoweredelectronics.com) + 
-[MMI Modular](http://www.mmimodular.com) USB PD 100W Power Supply. 
+Repowered Electronics + [MMI Modular](http://www.mmimodular.com) 
+[USB PD 100W Power Supply](https://repoweredelectronics.com/remmi-usb-power-2/). 
+
+We sincerecly try to follow [semantic versioning](https://semver.org/) 
+where possible.
 
 ## Overview
 

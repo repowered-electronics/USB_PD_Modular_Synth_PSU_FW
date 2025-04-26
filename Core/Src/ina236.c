@@ -38,7 +38,7 @@ uint16_t ina236_read_reg(INA236_t* ina, uint8_t reg){
 
 void ina236_general_call_reset(INA236_t* ina){
     uint8_t data = 0x06;
-    HAL_I2C_Master_Transmit(ina->hi2c, &data, 0, 1, 10); // reset all INA236's
+    HAL_I2C_Master_Transmit(ina->hi2c, 0, &data, 1, 10); // reset all INA236's
 }
 
 

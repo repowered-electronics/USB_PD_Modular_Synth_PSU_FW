@@ -586,7 +586,7 @@ int Find_Max_SRC_PDO(uint8_t Usb_Port)
         }
         else if (PDO_P == Pmax)
         {
-          if (PDO_V > Vmax)
+          if (PDO_V > Vmax && PDO_V < 22000) // TODO remove magic number
           {
             Vmax = PDO_V;
             i_PDOmax = i;

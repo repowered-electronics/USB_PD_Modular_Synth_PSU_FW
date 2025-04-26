@@ -106,6 +106,7 @@ uint16_t ina236_read_reg(INA236_t* ina, uint8_t reg);
 void ina236_general_call_reset(INA236_t* ina);
 void ina236_init(INA236_t* ina);
 void ina236_reset(INA236_t* ina);
+void ina236_set_shunt_range(INA236_t* ina, uint8_t range);
 void ina236_set_shuntcal(INA236_t* ina);
 float ina236_get_current(INA236_t* ina);
 float ina236_get_voltage(INA236_t* ina);

@@ -56,14 +56,14 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, DISABLE_N12_Pin|DISABLE_5P0_Pin|USBPD_RST_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : PAPin PAPin PAPin */
+  /*Configure GPIO pins : USB_GPIO_Pin PGOOD_12V_Pin PGOOD_5V_Pin */
   GPIO_InitStruct.Pin = USB_GPIO_Pin|PGOOD_12V_Pin|PGOOD_5V_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PAPin PAPin PAPin PAPin
-                           PAPin PAPin PAPin */
+  /*Configure GPIO pins : PDGOOD_Pin PD5V_Pin PD9V_Pin PD15V_Pin
+                           PD20V_Pin DISABLE_PRI_12V_Pin PDBAD_Pin */
   GPIO_InitStruct.Pin = PDGOOD_Pin|PD5V_Pin|PD9V_Pin|PD15V_Pin
                           |PD20V_Pin|DISABLE_PRI_12V_Pin|PDBAD_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -71,28 +71,28 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PBPin PBPin PBPin */
+  /*Configure GPIO pins : DISABLE_N12_Pin DISABLE_5P0_Pin USBPD_RST_Pin */
   GPIO_InitStruct.Pin = DISABLE_N12_Pin|DISABLE_5P0_Pin|USBPD_RST_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PtPin */
+  /*Configure GPIO pin : ATTACH_Pin */
   GPIO_InitStruct.Pin = ATTACH_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ATTACH_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PBPin PBPin PBPin PBPin */
+  /*Configure GPIO pins : USBPD_ALERT_Pin ALERT_5V_Pin ALERT_NEG_12V_Pin ALERT_POS_12V_Pin */
   GPIO_InitStruct.Pin = USBPD_ALERT_Pin|ALERT_5V_Pin|ALERT_NEG_12V_Pin|ALERT_POS_12V_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PtPin */
+  /*Configure GPIO pin : PWR_BTN_Pin */
   GPIO_InitStruct.Pin = PWR_BTN_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_EVT_FALLING;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(PWR_BTN_GPIO_Port, &GPIO_InitStruct);
 

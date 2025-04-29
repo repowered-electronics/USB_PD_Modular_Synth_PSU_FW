@@ -1,4 +1,4 @@
-# v1.0.0
+# v1.0.1
 # ReMMI USB PD 100W Modular Synth PSU Firmware
 
 This is the firmware source repo for the 

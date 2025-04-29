@@ -5,10 +5,10 @@
   * @brief          : Main program body
   ******************************************************************************
   * @attention
-  * Copyright (C) 2024  Repowered Electronics LLC
+  * Copyright (C) 2025  Repowered Electronics LLC
   *
   * This program is free software: you can redistribute it and/or modify
-  * it under the terms of the GNU General Public License as published by
+  * it under the terms of the GNU Lesser General Public License as published by
   * the Free Software Foundation, either version 3 of the License, or
   * (at your option) any later version.
   *
@@ -43,7 +43,6 @@
 #include "USB_PD_core.h"
 #include "ina236.h"
 #include "u8g2/u8g2.h"
-#include "display.h"
 #include <math.h>
 #include "ee.h"
 #include "eeConfig.h"
@@ -58,14 +57,13 @@
 /* USER CODE BEGIN PD */
 #define HICCUP_TIME_MS          1000
 #define DEBUG_INTERVAL          10000
-#define EFF_5V_CONV             0.9
 #define UART_RX_BUF_SIZE        128
 #define UART_TX_BUF_SIZE        1024  // need more since we'll be printing PDO strings potentially
 #define ENABLE_12V_TIMEOUT_US   1000000
 #define INIT_STARTUP_DLY_MS     50
-#define STUSB_INIT_DLY_MS       100
+#define STUSB_INIT_DLY_MS       250
 #define DUMB_CHG_IQ_MA          140   // current drawn from VBUS when it is ~5V
-#define DUMB_CHG_CURR_LIM_MA    (6000 - DUMB_CHG_IQ_MA)  // max allowed to be drawn from VBUS when it's ~5V (used for Plim calc)
+#define DUMB_CHG_CURR_LIM_MA    (3000 - DUMB_CHG_IQ_MA)  // max allowed to be drawn from VBUS when it's ~5V (used for Plim calc)
 #define OVERLD_LED_WARN_OFF_MS  750
 #define OVERLD_LED_WARN_ON_MS   250
 
@@ -172,12 +170,12 @@ typedef uint32_t* regmap_t;
 /* USER CODE BEGIN PM */
 #define ENABLE_PRIMARY_12V() HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 0)
 #define DISABLE_PRIMARY_12V() HAL_GPIO_WritePin(DISABLE_PRI_12V_GPIO_Port, DISABLE_PRI_12V_Pin, 1)
-#define PRI_12V_STATE() (((DISABLE_PRI_12V_GPIO_Port->ODR >> DISABLE_PRI_12V_Pin) & 1) ^ 1)
+#define PRI_12V_STATE() (((DISABLE_PRI_12V_GPIO_Port->ODR & DISABLE_PRI_12V_Pin)) ^ DISABLE_PRI_12V_Pin)
 #define ENABLE_PDGOOD_LED() HAL_GPIO_WritePin(PDGOOD_GPIO_Port, PDGOOD_Pin, 1)
 #define DISABLE_PDGOOD_LED() HAL_GPIO_WritePin(PDGOOD_GPIO_Port, PDGOOD_Pin, 0)
 #define ENABLE_OVRLD_LED() HAL_GPIO_WritePin(PDBAD_GPIO_Port, PDBAD_Pin, 1)
 #define DISABLE_OVRLD_LED() HAL_GPIO_WritePin(PDBAD_GPIO_Port, PDBAD_Pin, 0)
-#define OVRLD_LED_STATE() ((PDBAD_GPIO_Port->ODR >> PDBAD_Pin) & 1)
+#define OVRLD_LED_STATE() ((PDBAD_GPIO_Port->ODR & PDBAD_Pin))
 #define DISABLE_5PO_SUPPLY() HAL_GPIO_WritePin(DISABLE_5P0_GPIO_Port, DISABLE_5P0_Pin, 1)
 #define ENABLE_5P0_SUPPLY() HAL_GPIO_WritePin(DISABLE_5P0_GPIO_Port, DISABLE_5P0_Pin, 0)
 #define ENABLE_N12_SUPPLY() HAL_GPIO_WritePin(DISABLE_N12_GPIO_Port, DISABLE_N12_Pin, 0)
@@ -275,14 +273,10 @@ extern uint8_t Core_Process_suspended ;
 /* OLED THINGS */
 u8g2_t oled; // struct to contain data for one display
 uint32_t disp_present = 1; // default to being present
-display_t display = {
-  .oled = &oled
-}; // struct to contain more stuff about the display
 
 /* ADC things */
 volatile float vbus_meas = 0.0;
 float amps_in_vbus = 0.0;
-int32_t curr_vbus_uA = 0; /* effectively computed based on measurements */
 float pwr_vbus = 0;
 uint32_t adc_samples[2];
 volatile int adc_sample_count = 0;
@@ -395,7 +389,7 @@ int main(void)
   hi2c[0] = &hi2c1;
   STUSB45DeviceConf[usb_port_id].I2cBus = usb_port_id;
   STUSB45DeviceConf[usb_port_id].I2cDeviceID_7bit = 0x28;
-  STUSB45DeviceConf[usb_port_id].Alert_GPIO_Bank = (uint8_t)USBPD_ALERT_GPIO_Port;
+  STUSB45DeviceConf[usb_port_id].Alert_GPIO_Bank = (uint8_t)((int)USBPD_ALERT_GPIO_Port & 0xFF);
   STUSB45DeviceConf[usb_port_id].Alert_GPIO_Pin = USBPD_ALERT_Pin;
   AddressSize = I2C_MEMADD_SIZE_8BIT; 
   USB_PD_Interupt_PostponedFlag[0] = 0; /* this flag is 1 if I2C is busy when Alert signal raise */
@@ -416,7 +410,7 @@ int main(void)
     chg_type = CHG_TYPE_PD;
     Send_Soft_reset_Message(usb_port_id); //
     
-    HAL_Delay(250); //STUSB_INIT_DLY_MS); // allow STUSB4500 to Initialize
+    HAL_Delay(STUSB_INIT_DLY_MS); // allow STUSB4500 to Initialize
 
     Print_PDO_FROM_SRC(usb_port_id);
 
@@ -561,6 +555,8 @@ int main(void)
 
     /* UPDATE INA236's -------------------------------------------------------*/
     if (HAL_GetTick() - ina_update_stamp > INA_UPDATE_PERIOD) {
+      ina_update_stamp = HAL_GetTick();
+
       // Reading bus Voltage from INA236
       volts_p12v    = ina236_get_voltage(&ina_pos_12V);
       volts_5v      = ina236_get_voltage(&ina_5V);
@@ -833,7 +829,7 @@ int main(void)
         save_eff_coefs_to_flash();
       }
     }
-    
+
     HAL_Delay(LOOP_DELAY);
     
   }
@@ -1012,14 +1008,14 @@ void init_regmap(void) {
   regmap[REG_BUCK_BST_20VIN_C1] = (regmap_t)(eff_coefs_buck_boost_20vin + 1);
   regmap[REG_5V_CONV_C0] = (regmap_t)(eff_coefs_5v_conv);
   regmap[REG_5V_CONV_C1] = (regmap_t)(eff_coefs_5v_conv + 1);
-  regmap[REG_IBB_5VIN_C0] = (regmap_t)(&eff_coefs_ibb_5vin);
-  regmap[REG_IBB_5VIN_C1] = (regmap_t)(&eff_coefs_ibb_5vin + 1);
-  regmap[REG_IBB_9VIN_C0] = (regmap_t)(&eff_coefs_ibb_9vin);
-  regmap[REG_IBB_9VIN_C1] = (regmap_t)(&eff_coefs_ibb_9vin + 1);
-  regmap[REG_IBB_15VIN_C0] = (regmap_t)(&eff_coefs_ibb_15vin);
-  regmap[REG_IBB_15VIN_C1] = (regmap_t)(&eff_coefs_ibb_15vin + 1);
-  regmap[REG_IBB_20VIN_C0] = (regmap_t)(&eff_coefs_ibb_20vin);
-  regmap[REG_IBB_20VIN_C1] = (regmap_t)(&eff_coefs_ibb_20vin + 1);
+  regmap[REG_IBB_5VIN_C0] = (regmap_t)(eff_coefs_ibb_5vin);
+  regmap[REG_IBB_5VIN_C1] = (regmap_t)(eff_coefs_ibb_5vin + 1);
+  regmap[REG_IBB_9VIN_C0] = (regmap_t)(eff_coefs_ibb_9vin);
+  regmap[REG_IBB_9VIN_C1] = (regmap_t)(eff_coefs_ibb_9vin + 1);
+  regmap[REG_IBB_15VIN_C0] = (regmap_t)(eff_coefs_ibb_15vin);
+  regmap[REG_IBB_15VIN_C1] = (regmap_t)(eff_coefs_ibb_15vin + 1);
+  regmap[REG_IBB_20VIN_C0] = (regmap_t)(eff_coefs_ibb_20vin);
+  regmap[REG_IBB_20VIN_C1] = (regmap_t)(eff_coefs_ibb_20vin + 1);
   regmap[REG_DISP_PRESENT] = (regmap_t)(&disp_present);
   
   writeable[REG_DEBUG_MODE] = true;
@@ -1088,8 +1084,8 @@ void process_dev_packet(){
   }else{
     if(char_in_buffer(rx_buf, '=', rx_size)){
       // something is being set
-      uint8_t* word = (uint8_t*)malloc(rx_size);
-      char* token = strtok(rx_buf, "=");
+      char* word = (char*)malloc(rx_size);
+      char* token = strtok((char*)rx_buf, "=");
       while(token != NULL){
         strstrip(token, word); // word now holds the CMD/KEY
 
@@ -1295,7 +1291,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart){
       HAL_UART_Receive_DMA(&huart1, rx_buf, UART_HDDR_SIZE);
       return;
     }
-    uint8_t aux_value = rx_buf[1];
+    // index 1 is not used currently
     uint16_t body_len = rx_buf[2] | (rx_buf[3] << 8);
     if (body_len > 0) {
       if (body_len + UART_HDDR_SIZE > UART_RX_BUF_SIZE) {
